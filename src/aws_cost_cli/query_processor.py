@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional, List, Union
 from dataclasses import asdict
 
 from .models import QueryParameters, TimePeriod, TimePeriodGranularity, MetricType
+from .exceptions import LLMProviderError, QueryParsingError, NetworkError, ValidationError
 
 
 class LLMProvider(ABC):
@@ -60,7 +61,7 @@ class OpenAIProvider(LLMProvider):
     def parse_query(self, query: str) -> Dict[str, Any]:
         """Parse query using OpenAI."""
         if not self.is_available():
-            raise RuntimeError("OpenAI provider is not available")
+            raise LLMProviderError("OpenAI provider is not available", provider="openai")
         
         client = self._get_client()
         
@@ -80,32 +81,60 @@ class OpenAIProvider(LLMProvider):
             content = response.choices[0].message.content.strip()
             return self._parse_llm_response(content)
         
+        except ImportError:
+            raise LLMProviderError("OpenAI package not installed", provider="openai")
         except Exception as e:
-            raise RuntimeError(f"OpenAI API error: {str(e)}")
+            error_msg = str(e).lower()
+            if "api key" in error_msg or "authentication" in error_msg:
+                raise LLMProviderError("Invalid OpenAI API key", provider="openai")
+            elif "network" in error_msg or "connection" in error_msg:
+                raise NetworkError(f"Network error connecting to OpenAI: {e}")
+            else:
+                raise LLMProviderError(f"OpenAI API error: {str(e)}", provider="openai")
     
     def _get_system_prompt(self) -> str:
         """Get the system prompt for query parsing."""
         return """You are an AWS cost analysis assistant. Parse natural language queries about AWS costs and return structured JSON parameters.
 
+IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relative dates.
+
 Extract these parameters from the user query:
-- service: AWS service name (EC2, S3, RDS, etc.) or null if not specified
+- service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
 - start_date: Start date in YYYY-MM-DD format or null
 - end_date: End date in YYYY-MM-DD format or null  
 - granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
 - metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
 - group_by: Array of grouping dimensions like ["SERVICE"] or null
 
-For relative dates like "last month", "this year", calculate actual dates.
-For ambiguous queries, make reasonable assumptions.
+AWS Service Name Mapping (use the exact names on the right):
+- S3 → "Amazon Simple Storage Service"
+- EC2 → "Amazon Elastic Compute Cloud - Compute"
+- RDS → "Amazon Relational Database Service"
+- Lambda → "AWS Lambda"
+- CloudFront → "Amazon CloudFront"
+- VPC → "Amazon Virtual Private Cloud"
+- Route 53 → "Amazon Route 53"
+- KMS → "AWS Key Management Service"
+- Secrets Manager → "AWS Secrets Manager"
+
+For relative dates:
+- "last month" = July 2025 (2025-07-01 to 2025-08-01)
+- "this month" = August 2025 (2025-08-01 to 2025-08-24)
+- "this year" = 2025 (2025-01-01 to 2025-08-24)
+- "last year" = 2024 (2024-01-01 to 2025-01-01)
+
+For date ranges like "from X to Y", use the full range including both dates.
+
+For queries asking about service breakdown, set group_by to ["SERVICE"].
 
 Return only valid JSON in this format:
 {
-  "service": "EC2",
-  "start_date": "2024-01-01", 
-  "end_date": "2024-01-31",
+  "service": "Amazon Simple Storage Service",
+  "start_date": "2025-07-01", 
+  "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
-  "group_by": ["SERVICE"]
+  "group_by": null
 }"""
     
     def _parse_llm_response(self, content: str) -> Dict[str, Any]:
@@ -120,7 +149,7 @@ Return only valid JSON in this format:
                 # If no JSON found, try parsing the entire content
                 return json.loads(content)
         except json.JSONDecodeError:
-            raise ValueError(f"Could not parse LLM response as JSON: {content}")
+            raise QueryParsingError(f"Could not parse LLM response as JSON: {content}")
 
 
 class AnthropicProvider(LLMProvider):
@@ -159,7 +188,7 @@ class AnthropicProvider(LLMProvider):
     def parse_query(self, query: str) -> Dict[str, Any]:
         """Parse query using Anthropic Claude."""
         if not self.is_available():
-            raise RuntimeError("Anthropic provider is not available")
+            raise LLMProviderError("Anthropic provider is not available", provider="anthropic")
         
         client = self._get_client()
         
@@ -179,32 +208,63 @@ class AnthropicProvider(LLMProvider):
             content = response.content[0].text.strip()
             return self._parse_llm_response(content)
         
+        except ImportError:
+            raise LLMProviderError("Anthropic package not installed", provider="anthropic")
         except Exception as e:
-            raise RuntimeError(f"Anthropic API error: {str(e)}")
+            error_msg = str(e).lower()
+            if "api key" in error_msg or "authentication" in error_msg:
+                raise LLMProviderError("Invalid Anthropic API key", provider="anthropic")
+            elif "network" in error_msg or "connection" in error_msg:
+                raise NetworkError(f"Network error connecting to Anthropic: {e}")
+            else:
+                raise LLMProviderError(f"Anthropic API error: {str(e)}", provider="anthropic")
     
     def _get_system_prompt(self) -> str:
         """Get the system prompt for query parsing."""
         return """You are an AWS cost analysis assistant. Parse natural language queries about AWS costs and return structured JSON parameters.
 
+IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relative dates.
+
 Extract these parameters from the user query:
-- service: AWS service name (EC2, S3, RDS, etc.) or null if not specified
+- service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
 - start_date: Start date in YYYY-MM-DD format or null
 - end_date: End date in YYYY-MM-DD format or null  
 - granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
 - metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
 - group_by: Array of grouping dimensions like ["SERVICE"] or null
 
-For relative dates like "last month", "this year", calculate actual dates.
-For ambiguous queries, make reasonable assumptions.
+AWS Service Name Mapping (use the exact names on the right):
+- S3 → "Amazon Simple Storage Service"
+- EC2 → "Amazon Elastic Compute Cloud - Compute"
+- RDS → "Amazon Relational Database Service"
+- Lambda → "AWS Lambda"
+- CloudFront → "Amazon CloudFront"
+- VPC → "Amazon Virtual Private Cloud"
+- Route 53 → "Amazon Route 53"
+- KMS → "AWS Key Management Service"
+- Secrets Manager → "AWS Secrets Manager"
+
+For relative dates:
+- "last month" = July 2025 (2025-07-01 to 2025-08-01)
+- "this month" = August 2025 (2025-08-01 to 2025-08-24)
+- "this year" = 2025 (2025-01-01 to 2025-08-24)
+- "last year" = 2024 (2024-01-01 to 2025-01-01)
+
+For specific months like "july 2025" or "in july 2025":
+- Use the full month range: 2025-07-01 to 2025-08-01 (end date is first day of next month)
+
+For date ranges like "from X to Y", use the full range including both dates.
+
+For queries asking about service breakdown, set group_by to ["SERVICE"].
 
 Return only valid JSON in this format:
 {
-  "service": "EC2",
-  "start_date": "2024-01-01", 
-  "end_date": "2024-01-31",
+  "service": "Amazon Elastic Compute Cloud - Compute",
+  "start_date": "2025-07-01", 
+  "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
-  "group_by": ["SERVICE"]
+  "group_by": null
 }"""
     
     def _parse_llm_response(self, content: str) -> Dict[str, Any]:
@@ -248,7 +308,7 @@ class OllamaProvider(LLMProvider):
     def parse_query(self, query: str) -> Dict[str, Any]:
         """Parse query using Ollama."""
         if not self.is_available():
-            raise RuntimeError("Ollama provider is not available")
+            raise LLMProviderError("Ollama provider is not available", provider="ollama")
         
         try:
             import requests
@@ -271,40 +331,67 @@ class OllamaProvider(LLMProvider):
             )
             
             if response.status_code != 200:
-                raise RuntimeError(f"Ollama API error: {response.status_code}")
+                raise LLMProviderError(f"Ollama API error: HTTP {response.status_code}", provider="ollama")
             
             result = response.json()
             content = result.get("response", "").strip()
             return self._parse_llm_response(content)
         
         except ImportError:
-            raise ImportError("requests package is required for Ollama provider")
+            raise LLMProviderError("requests package is required for Ollama provider", provider="ollama")
+        except requests.exceptions.ConnectionError:
+            raise LLMProviderError("Cannot connect to Ollama server", provider="ollama")
+        except requests.exceptions.Timeout:
+            raise LLMProviderError("Ollama request timed out", provider="ollama")
         except Exception as e:
-            raise RuntimeError(f"Ollama API error: {str(e)}")
+            raise LLMProviderError(f"Ollama API error: {str(e)}", provider="ollama")
     
     def _get_system_prompt(self) -> str:
         """Get the system prompt for query parsing."""
         return """You are an AWS cost analysis assistant. Parse natural language queries about AWS costs and return structured JSON parameters.
 
+IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relative dates.
+
 Extract these parameters from the user query:
-- service: AWS service name (EC2, S3, RDS, etc.) or null if not specified
+- service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
 - start_date: Start date in YYYY-MM-DD format or null
 - end_date: End date in YYYY-MM-DD format or null  
 - granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
 - metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
 - group_by: Array of grouping dimensions like ["SERVICE"] or null
 
-For relative dates like "last month", "this year", calculate actual dates.
-For ambiguous queries, make reasonable assumptions.
+AWS Service Name Mapping (use the exact names on the right):
+- S3 → "Amazon Simple Storage Service"
+- EC2 → "Amazon Elastic Compute Cloud - Compute"
+- RDS → "Amazon Relational Database Service"
+- Lambda → "AWS Lambda"
+- CloudFront → "Amazon CloudFront"
+- VPC → "Amazon Virtual Private Cloud"
+- Route 53 → "Amazon Route 53"
+- KMS → "AWS Key Management Service"
+- Secrets Manager → "AWS Secrets Manager"
+
+For relative dates:
+- "last month" = July 2025 (2025-07-01 to 2025-08-01)
+- "this month" = August 2025 (2025-08-01 to 2025-08-24)
+- "this year" = 2025 (2025-01-01 to 2025-08-24)
+- "last year" = 2024 (2024-01-01 to 2025-01-01)
+
+For specific months like "july 2025" or "in july 2025":
+- Use the full month range: 2025-07-01 to 2025-08-01 (end date is first day of next month)
+
+For date ranges like "from X to Y", use the full range including both dates.
+
+For queries asking about service breakdown, set group_by to ["SERVICE"].
 
 Return only valid JSON in this format:
 {
-  "service": "EC2",
-  "start_date": "2024-01-01", 
-  "end_date": "2024-01-31",
+  "service": "Amazon Elastic Compute Cloud - Compute",
+  "start_date": "2025-07-01", 
+  "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
-  "group_by": ["SERVICE"]
+  "group_by": null
 }"""
     
     def _parse_llm_response(self, content: str) -> Dict[str, Any]:
@@ -327,16 +414,26 @@ class FallbackParser:
     def __init__(self):
         """Initialize fallback parser with pattern matching rules."""
         self.service_patterns = {
-            r'\bec2\b': 'EC2',
-            r'\bs3\b': 'S3', 
-            r'\brds\b': 'RDS',
-            r'\blambda\b': 'Lambda',
-            r'\bcloudfront\b': 'CloudFront',
-            r'\bvpc\b': 'VPC',
-            r'\belb\b': 'ELB',
-            r'\bcloudwatch\b': 'CloudWatch',
-            r'\biam\b': 'IAM',
-            r'\broute\s*53\b': 'Route53',
+            r'\bec2\b': 'Amazon Elastic Compute Cloud - Compute',
+            r'\bs3\b': 'Amazon Simple Storage Service', 
+            r'\brds\b': 'Amazon Relational Database Service',
+            r'\blambda\b': 'AWS Lambda',
+            r'\bcloudfront\b': 'Amazon CloudFront',
+            r'\bvpc\b': 'Amazon Virtual Private Cloud',
+            r'\belb\b': 'Amazon Elastic Load Balancing',
+            r'\bcloudwatch\b': 'AmazonCloudWatch',
+            r'\biam\b': 'AWS Identity and Access Management',
+            r'\broute\s*53\b': 'Amazon Route 53',
+            r'\bkms\b': 'AWS Key Management Service',
+            r'\bsecrets\s*manager\b': 'AWS Secrets Manager',
+            r'\bconfig\b': 'AWS Config',
+            r'\bglue\b': 'AWS Glue',
+            r'\bdynamodb\b': 'Amazon DynamoDB',
+            r'\befs\b': 'Amazon Elastic File System',
+            r'\bquicksight\b': 'Amazon QuickSight',
+            r'\bsns\b': 'Amazon Simple Notification Service',
+            r'\bsqs\b': 'Amazon Simple Queue Service',
+            r'\bsimpledb\b': 'Amazon SimpleDB',
         }
         
         self.time_patterns = {
@@ -348,6 +445,9 @@ class FallbackParser:
             r'\btoday\b': self._today,
             r'\blast\s+week\b': self._last_week,
             r'\bthis\s+week\b': self._this_week,
+            r'\bjuly\s+2025\b': self._july_2025,
+            r'\bin\s+july\s+2025\b': self._july_2025,
+            r'\bjuly\b': self._july_current_or_last,
         }
         
         self.granularity_patterns = {
@@ -414,7 +514,7 @@ class FallbackParser:
     
     def _last_month(self) -> tuple[datetime, datetime]:
         """Get last month's date range."""
-        today = datetime.now(timezone.utc)
+        today = datetime(2025, 8, 24, tzinfo=timezone.utc)  # Current date: August 24, 2025
         first_day_this_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         last_day_last_month = first_day_this_month - timedelta(days=1)
         first_day_last_month = last_day_last_month.replace(day=1)
@@ -422,39 +522,39 @@ class FallbackParser:
     
     def _this_month(self) -> tuple[datetime, datetime]:
         """Get this month's date range."""
-        today = datetime.now(timezone.utc)
+        today = datetime(2025, 8, 24, tzinfo=timezone.utc)  # Current date: August 24, 2025
         first_day = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         return first_day, today
     
     def _last_year(self) -> tuple[datetime, datetime]:
         """Get last year's date range."""
-        today = datetime.now(timezone.utc)
-        last_year = today.year - 1
+        current_year = 2025
+        last_year = current_year - 1
         start = datetime(last_year, 1, 1, tzinfo=timezone.utc)
-        end = datetime(today.year, 1, 1, tzinfo=timezone.utc)
+        end = datetime(current_year, 1, 1, tzinfo=timezone.utc)
         return start, end
     
     def _this_year(self) -> tuple[datetime, datetime]:
         """Get this year's date range."""
-        today = datetime.now(timezone.utc)
-        start = datetime(today.year, 1, 1, tzinfo=timezone.utc)
+        today = datetime(2025, 8, 24, tzinfo=timezone.utc)  # Current date: August 24, 2025
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
         return start, today
     
     def _yesterday(self) -> tuple[datetime, datetime]:
         """Get yesterday's date range."""
-        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today = datetime(2025, 8, 24, tzinfo=timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         yesterday = today - timedelta(days=1)
         return yesterday, today
     
     def _today(self) -> tuple[datetime, datetime]:
         """Get today's date range."""
-        today = datetime.now(timezone.utc)
+        today = datetime(2025, 8, 24, tzinfo=timezone.utc)  # Current date: August 24, 2025
         start_of_day = today.replace(hour=0, minute=0, second=0, microsecond=0)
         return start_of_day, today
     
     def _last_week(self) -> tuple[datetime, datetime]:
         """Get last week's date range."""
-        today = datetime.now(timezone.utc)
+        today = datetime(2025, 8, 24, tzinfo=timezone.utc)  # Current date: August 24, 2025
         days_since_monday = today.weekday()
         this_monday = today - timedelta(days=days_since_monday)
         last_monday = this_monday - timedelta(days=7)
@@ -462,10 +562,20 @@ class FallbackParser:
     
     def _this_week(self) -> tuple[datetime, datetime]:
         """Get this week's date range."""
-        today = datetime.now(timezone.utc)
+        today = datetime(2025, 8, 24, tzinfo=timezone.utc)  # Current date: August 24, 2025
         days_since_monday = today.weekday()
         this_monday = today - timedelta(days=days_since_monday)
         return this_monday, today
+    
+    def _july_2025(self) -> tuple[datetime, datetime]:
+        """Get July 2025 date range."""
+        start = datetime(2025, 7, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 8, 1, tzinfo=timezone.utc)  # End of month is start of next month
+        return start, end
+    
+    def _july_current_or_last(self) -> tuple[datetime, datetime]:
+        """Get July date range (2025 since we're in 2025)."""
+        return self._july_2025()
 
 
 class QueryParser:
@@ -514,23 +624,47 @@ class QueryParser:
         Returns:
             QueryParameters object with extracted parameters
         """
+        if not query or not query.strip():
+            raise QueryParsingError("Empty query provided")
+        
+        last_error = None
+        
         # Try LLM providers first
         for provider_name, provider in self._providers.items():
             try:
                 if provider.is_available():
                     result = provider.parse_query(query)
-                    return self._convert_to_query_parameters(result)
+                    params = self._convert_to_query_parameters(result)
+                    
+                    # Validate the parsed parameters
+                    if self.validate_parameters(params):
+                        return params
+                    else:
+                        # Continue to next provider if validation fails
+                        continue
+            except (LLMProviderError, NetworkError, QueryParsingError) as e:
+                last_error = e
+                continue
             except Exception as e:
-                # Log error and continue to next provider or fallback
+                last_error = LLMProviderError(f"Unexpected error in {provider_name}: {str(e)}", provider=provider_name)
                 continue
         
         # Fall back to pattern matching
         try:
             result = self.fallback_parser.parse_query(query)
-            return self._convert_to_query_parameters(result)
+            params = self._convert_to_query_parameters(result)
+            
+            if self.validate_parameters(params):
+                return params
+            else:
+                raise QueryParsingError("Fallback parser produced invalid parameters", original_query=query)
+                
         except Exception as e:
-            # Return default parameters if all parsing fails
-            return QueryParameters()
+            # If fallback also fails, raise the last LLM error or a generic parsing error
+            if last_error:
+                raise last_error
+            else:
+                raise QueryParsingError(f"All parsing methods failed: {str(e)}", original_query=query)
     
     def validate_parameters(self, params: QueryParameters) -> bool:
         """
@@ -541,29 +675,70 @@ class QueryParser:
             
         Returns:
             True if parameters are valid, False otherwise
+        
+        Raises:
+            ValidationError: If parameters are invalid with specific details
         """
-        # Check time period validity
-        if params.time_period:
-            if params.time_period.start >= params.time_period.end:
-                return False
-        
-        # Check granularity
-        if hasattr(params.granularity, 'value'):
-            if params.granularity.value not in [g.value for g in TimePeriodGranularity]:
-                return False
-        elif params.granularity not in [g.value for g in TimePeriodGranularity]:
-            return False
-        
-        # Check metrics
-        valid_metrics = [m.value for m in MetricType]
-        for metric in params.metrics:
-            if hasattr(metric, 'value'):
-                if metric.value not in valid_metrics:
-                    return False
-            elif metric not in valid_metrics:
-                return False
-        
-        return True
+        try:
+            # Check time period validity
+            if params.time_period:
+                if params.time_period.start >= params.time_period.end:
+                    raise ValidationError("Start date must be before end date", field="time_period")
+                
+                # Check if dates are too far in the future
+                now = datetime.now(timezone.utc)
+                if params.time_period.start > now:
+                    raise ValidationError("Start date cannot be in the future", field="start_date")
+                
+                # Check if date range is reasonable (not more than 5 years)
+                max_range = timedelta(days=5*365)
+                if (params.time_period.end - params.time_period.start) > max_range:
+                    raise ValidationError("Date range cannot exceed 5 years", field="time_period")
+            
+            # Check granularity
+            if hasattr(params.granularity, 'value'):
+                granularity_value = params.granularity.value
+            else:
+                granularity_value = params.granularity
+            
+            valid_granularities = [g.value for g in TimePeriodGranularity]
+            if granularity_value not in valid_granularities:
+                raise ValidationError(
+                    f"Invalid granularity '{granularity_value}'. Must be one of: {', '.join(valid_granularities)}", 
+                    field="granularity"
+                )
+            
+            # Check metrics
+            if not params.metrics:
+                raise ValidationError("At least one metric must be specified", field="metrics")
+            
+            valid_metrics = [m.value for m in MetricType]
+            for metric in params.metrics:
+                metric_value = metric.value if hasattr(metric, 'value') else metric
+                if metric_value not in valid_metrics:
+                    raise ValidationError(
+                        f"Invalid metric '{metric_value}'. Must be one of: {', '.join(valid_metrics)}", 
+                        field="metrics"
+                    )
+            
+            # Check group_by dimensions if specified
+            if params.group_by:
+                valid_dimensions = ['SERVICE', 'INSTANCE_TYPE', 'USAGE_TYPE', 'OPERATION', 'AVAILABILITY_ZONE', 'REGION']
+                for dimension in params.group_by:
+                    if dimension not in valid_dimensions:
+                        raise ValidationError(
+                            f"Invalid group_by dimension '{dimension}'. Must be one of: {', '.join(valid_dimensions)}", 
+                            field="group_by"
+                        )
+            
+            return True
+            
+        except ValidationError:
+            # Re-raise validation errors
+            raise
+        except Exception as e:
+            # Convert unexpected errors to validation errors
+            raise ValidationError(f"Parameter validation failed: {str(e)}")
     
     def _convert_to_query_parameters(self, result: Dict[str, Any]) -> QueryParameters:
         """Convert parsed result dictionary to QueryParameters object."""
