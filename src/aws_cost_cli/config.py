@@ -159,6 +159,10 @@ class ConfigManager:
         """Get the currently loaded configuration."""
         return self._config
     
+    def get_default_config_path(self) -> Path:
+        """Get the default configuration file path."""
+        return Path("~/.aws-cost-cli/config.yaml").expanduser()
+    
     def validate_config(self, config: Config) -> bool:
         """Validate configuration values."""
         # Validate LLM provider

@@ -48,14 +48,14 @@
   - Write unit tests for response formatting with various cost data structures
   - _Requirements: 6.1, 6.2, 6.3, 8.4, 9.2_
 
-- [-] 8. Build CLI interface with Click/Typer
+- [x] 8. Build CLI interface with Click/Typer
   - Create main CLI entry point with Click or Typer framework
   - Implement primary query command with natural language input
   - Add configuration commands for LLM provider setup
   - Add profile listing and selection functionality
   - _Requirements: 4.4, 8.2_
 
-- [ ] 9. Implement comprehensive error handling
+- [-] 9. Implement comprehensive error handling
   - Add graceful error handling for AWS API failures with user-friendly messages
   - Implement network connectivity error handling and guidance
   - Add specific error handling for permission issues with IAM requirement details

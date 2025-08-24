@@ -100,10 +100,53 @@ class CacheManager:
         except OSError:
             return False
     
-    def get_cached_data(self, params: QueryParameters, profile: Optional[str] = None, 
+    def generate_cache_key(self, params: QueryParameters, profile: Optional[str] = None) -> str:
+        """
+        Generate cache key for query parameters.
+        
+        Args:
+            params: Query parameters
+            profile: AWS profile name
+            
+        Returns:
+            Cache key string
+        """
+        return self._generate_query_hash(params, profile)
+    
+    def get_cached_data(self, cache_key: str) -> Optional[CostData]:
+        """
+        Retrieve cached cost data by cache key.
+        
+        Args:
+            cache_key: Cache key string
+            
+        Returns:
+            Cached CostData if available and valid, None otherwise
+        """
+        cache_file = self._get_cache_file_path(cache_key)
+        
+        if not self._is_cache_valid(cache_file, self.default_ttl):
+            return None
+        
+        try:
+            with open(cache_file, 'r') as f:
+                cache_data = json.load(f)
+            
+            # Reconstruct CostData from cached JSON
+            return self._deserialize_cost_data(cache_data['data'])
+        
+        except (json.JSONDecodeError, KeyError, OSError) as e:
+            # If cache file is corrupted, remove it
+            try:
+                cache_file.unlink()
+            except OSError:
+                pass
+            return None
+    
+    def get_cached_data_by_params(self, params: QueryParameters, profile: Optional[str] = None, 
                        ttl: Optional[int] = None) -> Optional[CostData]:
         """
-        Retrieve cached cost data if available and valid.
+        Retrieve cached cost data if available and valid (legacy method).
         
         Args:
             params: Query parameters
@@ -137,10 +180,43 @@ class CacheManager:
                 pass
             return None    
 
-    def cache_data(self, params: QueryParameters, data: CostData, 
+    def cache_data(self, cache_key: str, data: CostData, ttl: Optional[int] = None) -> bool:
+        """
+        Cache cost data with cache key.
+        
+        Args:
+            cache_key: Cache key string
+            data: Cost data to cache
+            ttl: TTL in seconds (uses default if None)
+            
+        Returns:
+            True if caching succeeded, False otherwise
+        """
+        if ttl is None:
+            ttl = self.default_ttl
+        
+        cache_file = self._get_cache_file_path(cache_key)
+        
+        try:
+            cache_entry = {
+                'data': self._serialize_cost_data(data),
+                'cached_at': datetime.now(timezone.utc).isoformat(),
+                'ttl': ttl,
+                'query_hash': cache_key
+            }
+            
+            with open(cache_file, 'w') as f:
+                json.dump(cache_entry, f, indent=2, default=str)
+            
+            return True
+        
+        except (OSError, TypeError, ValueError) as e:
+            return False
+    
+    def cache_data_by_params(self, params: QueryParameters, data: CostData, 
                    profile: Optional[str] = None, ttl: Optional[int] = None) -> bool:
         """
-        Cache cost data with TTL.
+        Cache cost data with TTL (legacy method).
         
         Args:
             params: Query parameters used to generate cache key
@@ -207,6 +283,15 @@ class CacheManager:
             pass
         
         return removed_count
+    
+    def clear_cache(self) -> int:
+        """
+        Clear all cache entries.
+        
+        Returns:
+            Number of cache files removed
+        """
+        return self.invalidate_cache()
     
     def cleanup_expired_cache(self) -> int:
         """

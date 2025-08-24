@@ -49,6 +49,10 @@ pytest tests/
 black src/
 ```
 
+## Author
+
+Created by [Vinny Carpenter](https://vinny.dev/)
+
 ## License
 
 MIT License
