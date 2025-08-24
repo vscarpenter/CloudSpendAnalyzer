@@ -10,6 +10,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from .models import CostData, QueryParameters
+from .exceptions import CacheError
 
 
 class CacheManager:
@@ -31,9 +32,8 @@ class CacheManager:
         self.cache_dir = Path(cache_dir)
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            # If we can't create the cache directory, continue without caching
-            pass
+        except OSError as e:
+            raise CacheError(f"Failed to create cache directory {cache_dir}: {e}")
     
     def _generate_query_hash(self, params: QueryParameters, profile: Optional[str] = None) -> str:
         """
@@ -135,13 +135,15 @@ class CacheManager:
             # Reconstruct CostData from cached JSON
             return self._deserialize_cost_data(cache_data['data'])
         
-        except (json.JSONDecodeError, KeyError, OSError) as e:
+        except (json.JSONDecodeError, KeyError) as e:
             # If cache file is corrupted, remove it
             try:
                 cache_file.unlink()
             except OSError:
                 pass
             return None
+        except OSError as e:
+            raise CacheError(f"Failed to read cache file: {e}")
     
     def get_cached_data_by_params(self, params: QueryParameters, profile: Optional[str] = None, 
                        ttl: Optional[int] = None) -> Optional[CostData]:
@@ -211,7 +213,7 @@ class CacheManager:
             return True
         
         except (OSError, TypeError, ValueError) as e:
-            return False
+            raise CacheError(f"Failed to write cache file: {e}")
     
     def cache_data_by_params(self, params: QueryParameters, data: CostData, 
                    profile: Optional[str] = None, ttl: Optional[int] = None) -> bool:

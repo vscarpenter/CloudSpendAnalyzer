@@ -2,16 +2,31 @@
 
 import boto3
 import time
+import random
 from botocore.exceptions import (
     ClientError, 
     NoCredentialsError, 
     PartialCredentialsError,
-    ProfileNotFound
+    ProfileNotFound,
+    EndpointConnectionError,
+    ConnectTimeoutError,
+    ReadTimeoutError
 )
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from .models import QueryParameters, CostData, CostResult, CostAmount, TimePeriod, Group, TimePeriodGranularity
+from .models import QueryParameters, CostData, CostResult, CostAmount, TimePeriod, Group, TimePeriodGranularity, MetricType
+from .exceptions import (
+    AWSCredentialsError,
+    AWSPermissionsError,
+    AWSAPIError,
+    NetworkError,
+    CacheError,
+    handle_aws_client_error,
+    handle_network_error,
+    is_retryable_error,
+    get_retry_delay
+)
 
 
 class CredentialManager:
@@ -34,12 +49,17 @@ class CredentialManager:
             sts_client = session.client('sts')
             sts_client.get_caller_identity()
             return True
-        except (NoCredentialsError, PartialCredentialsError, ProfileNotFound):
+        except (NoCredentialsError, PartialCredentialsError):
+            return False
+        except ProfileNotFound:
             return False
         except ClientError as e:
             # If we get a client error but not credential-related, credentials are valid
             error_code = e.response.get('Error', {}).get('Code', '')
             return error_code not in ['InvalidUserID.NotFound', 'AccessDenied']
+        except (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError):
+            # Network errors don't indicate invalid credentials
+            return True
         except Exception:
             return False
     
@@ -49,8 +69,16 @@ class CredentialManager:
             session = boto3.Session(profile_name=profile) if profile else boto3.Session()
             sts_client = session.client('sts')
             return sts_client.get_caller_identity()
+        except (NoCredentialsError, PartialCredentialsError):
+            raise AWSCredentialsError(profile=profile)
+        except ProfileNotFound:
+            raise AWSCredentialsError(f"AWS profile '{profile}' not found", profile=profile)
+        except ClientError as e:
+            raise handle_aws_client_error(e, "getting caller identity")
+        except (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError) as e:
+            raise handle_network_error(e, "getting caller identity")
         except Exception as e:
-            raise RuntimeError(f"Failed to get caller identity: {e}")
+            raise AWSAPIError(f"Failed to get caller identity: {e}")
 
 
 class AWSCostClient:
@@ -65,13 +93,14 @@ class AWSCostClient:
         "ce:GetUsageReport"
     ]
     
-    def __init__(self, profile: Optional[str] = None, region: str = "us-east-1"):
+    def __init__(self, profile: Optional[str] = None, region: str = "us-east-1", cache_manager=None):
         """Initialize AWS Cost Explorer client."""
         self.profile = profile
         self.region = region
         self.session = boto3.Session(profile_name=profile) if profile else boto3.Session()
         self.client = self.session.client('ce', region_name=region)
         self.credential_manager = CredentialManager()
+        self.cache_manager = cache_manager
     
     def validate_permissions(self) -> bool:
         """Validate that the current credentials have necessary permissions."""
@@ -95,16 +124,27 @@ class AWSCostClient:
                 return False
             # Other errors might be due to data availability, not permissions
             return True
+        except (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError):
+            # Network errors don't indicate permission issues
+            return True
         except Exception:
             return False
     
-    def get_cost_and_usage(self, params: QueryParameters) -> CostData:
+    def get_cost_and_usage(self, params: QueryParameters, use_cache: bool = True) -> CostData:
         """Retrieve cost and usage data from AWS Cost Explorer."""
-        import time
-        import random
+        # Try cache first if enabled and cache manager is available
+        if use_cache and self.cache_manager:
+            try:
+                cache_key = self.cache_manager.generate_cache_key(params, self.profile or 'default')
+                cached_data = self.cache_manager.get_cached_data(cache_key)
+                if cached_data:
+                    return cached_data
+            except CacheError:
+                # Continue without cache if cache fails
+                pass
         
         max_retries = 3
-        base_delay = 1
+        last_error = None
         
         for attempt in range(max_retries):
             try:
@@ -114,79 +154,111 @@ class AWSCostClient:
                 # Make the API call
                 response = self.client.get_cost_and_usage(**request_params)
                 
-                # Parse and return the response
-                return self._parse_cost_response(response, params)
+                # Parse the response
+                cost_data = self._parse_cost_response(response, params)
+                
+                # Cache the result if cache manager is available
+                if self.cache_manager:
+                    try:
+                        cache_key = self.cache_manager.generate_cache_key(params, self.profile or 'default')
+                        self.cache_manager.cache_data(cache_key, cost_data)
+                    except CacheError:
+                        # Continue without caching if cache fails
+                        pass
+                
+                return cost_data
                 
             except ClientError as e:
-                error_code = e.response.get('Error', {}).get('Code', '')
-                error_message = e.response.get('Error', {}).get('Message', '')
+                aws_error = handle_aws_client_error(e, "retrieving cost data")
+                last_error = aws_error
                 
-                if error_code == 'AccessDenied':
-                    raise PermissionError(
-                        f"Access denied to Cost Explorer API. "
-                        f"Required permissions: {', '.join(self.REQUIRED_PERMISSIONS)}"
-                    )
-                elif error_code == 'ThrottlingException':
-                    if attempt < max_retries - 1:
-                        # Exponential backoff with jitter
-                        delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
-                        time.sleep(delay)
-                        continue
-                    else:
-                        raise RuntimeError(
-                            "AWS API rate limit exceeded after multiple retries. "
-                            "Please wait a few minutes and try again."
-                        )
-                elif error_code == 'InvalidParameterValue':
-                    raise ValueError(f"Invalid parameter in cost query: {error_message}")
-                elif error_code == 'ServiceUnavailable':
-                    if attempt < max_retries - 1:
-                        delay = base_delay * (2 ** attempt)
-                        time.sleep(delay)
-                        continue
-                    else:
-                        raise RuntimeError(
-                            "AWS Cost Explorer service is temporarily unavailable. "
-                            "Please try again later."
-                        )
-                else:
-                    raise RuntimeError(f"AWS API error ({error_code}): {error_message}")
-            
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    # Retry on unexpected errors
-                    delay = base_delay * (2 ** attempt)
+                # Check if error is retryable
+                if is_retryable_error(aws_error) and attempt < max_retries - 1:
+                    delay = get_retry_delay(attempt)
                     time.sleep(delay)
                     continue
                 else:
-                    raise RuntimeError(f"Failed to retrieve cost data: {e}")
+                    raise aws_error
+            
+            except (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError) as e:
+                network_error = handle_network_error(e, "retrieving cost data")
+                last_error = network_error
+                
+                if attempt < max_retries - 1:
+                    delay = get_retry_delay(attempt)
+                    time.sleep(delay)
+                    continue
+                else:
+                    raise network_error
+            
+            except Exception as e:
+                last_error = AWSAPIError(f"Failed to retrieve cost data: {e}")
+                
+                if attempt < max_retries - 1:
+                    delay = get_retry_delay(attempt)
+                    time.sleep(delay)
+                    continue
+                else:
+                    raise last_error
+        
+        # This should never be reached, but just in case
+        if last_error:
+            raise last_error
+        else:
+            raise AWSAPIError("Failed to retrieve cost data after multiple retries")
     
     def get_dimension_values(self, dimension: str, time_period: Optional[TimePeriod] = None) -> List[str]:
         """Get available values for a specific dimension (e.g., SERVICE, INSTANCE_TYPE)."""
-        try:
-            # Default to last 30 days if no time period specified
-            if not time_period:
-                end_date = datetime.now().date()
-                start_date = end_date - timedelta(days=30)
-                time_period = TimePeriod(
-                    start=datetime.combine(start_date, datetime.min.time()),
-                    end=datetime.combine(end_date, datetime.min.time())
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            try:
+                # Default to last 30 days if no time period specified
+                if not time_period:
+                    end_date = datetime.now().date()
+                    start_date = end_date - timedelta(days=30)
+                    time_period = TimePeriod(
+                        start=datetime.combine(start_date, datetime.min.time()),
+                        end=datetime.combine(end_date, datetime.min.time())
+                    )
+                
+                response = self.client.get_dimension_values(
+                    TimePeriod={
+                        'Start': time_period.start.strftime('%Y-%m-%d'),
+                        'End': time_period.end.strftime('%Y-%m-%d')
+                    },
+                    Dimension=dimension
                 )
+                
+                return [item['Value'] for item in response.get('DimensionValues', [])]
+                
+            except ClientError as e:
+                aws_error = handle_aws_client_error(e, f"getting dimension values for {dimension}")
+                
+                if is_retryable_error(aws_error) and attempt < max_retries - 1:
+                    delay = get_retry_delay(attempt)
+                    time.sleep(delay)
+                    continue
+                else:
+                    raise aws_error
             
-            response = self.client.get_dimension_values(
-                TimePeriod={
-                    'Start': time_period.start.strftime('%Y-%m-%d'),
-                    'End': time_period.end.strftime('%Y-%m-%d')
-                },
-                Dimension=dimension
-            )
+            except (EndpointConnectionError, ConnectTimeoutError, ReadTimeoutError) as e:
+                network_error = handle_network_error(e, f"getting dimension values for {dimension}")
+                
+                if attempt < max_retries - 1:
+                    delay = get_retry_delay(attempt)
+                    time.sleep(delay)
+                    continue
+                else:
+                    raise network_error
             
-            return [item['Value'] for item in response.get('DimensionValues', [])]
-            
-        except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', '')
-            error_message = e.response.get('Error', {}).get('Message', '')
-            raise RuntimeError(f"Failed to get dimension values ({error_code}): {error_message}")
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    delay = get_retry_delay(attempt)
+                    time.sleep(delay)
+                    continue
+                else:
+                    raise AWSAPIError(f"Failed to get dimension values for {dimension}: {e}")
     
     def _build_cost_request(self, params: QueryParameters) -> Dict[str, Any]:
         """Build the Cost Explorer API request from query parameters."""
@@ -428,3 +500,147 @@ class AWSCostClient:
             return "5-15 seconds"
         else:
             return "15-60 seconds"
+    
+    def warm_cache_for_common_queries(self) -> Dict[str, Any]:
+        """
+        Warm the cache with common queries to improve response times.
+        
+        Returns:
+            Dictionary with warming results
+        """
+        if not self.cache_manager:
+            return {"error": "No cache manager available"}
+        
+        warming_results = {
+            "queries_warmed": 0,
+            "queries_failed": 0,
+            "errors": []
+        }
+        
+        # Define common query patterns
+        common_queries = [
+            # Current month total costs
+            QueryParameters(
+                time_period=self._get_current_month_period(),
+                granularity=TimePeriodGranularity.MONTHLY,
+                metrics=[MetricType.BLENDED_COST]
+            ),
+            # Last month total costs
+            QueryParameters(
+                time_period=self._get_last_month_period(),
+                granularity=TimePeriodGranularity.MONTHLY,
+                metrics=[MetricType.BLENDED_COST]
+            ),
+            # Current month by service
+            QueryParameters(
+                time_period=self._get_current_month_period(),
+                granularity=TimePeriodGranularity.MONTHLY,
+                metrics=[MetricType.BLENDED_COST],
+                group_by=["SERVICE"]
+            ),
+            # Last 7 days daily costs
+            QueryParameters(
+                time_period=self._get_last_week_period(),
+                granularity=TimePeriodGranularity.DAILY,
+                metrics=[MetricType.BLENDED_COST]
+            ),
+        ]
+        
+        for query_params in common_queries:
+            try:
+                # Check if already cached
+                cache_key = self.cache_manager.generate_cache_key(query_params, self.profile or 'default')
+                if not self.cache_manager.get_cached_data(cache_key):
+                    # Not cached, fetch and cache
+                    self.get_cost_and_usage(query_params, use_cache=False)
+                    warming_results["queries_warmed"] += 1
+            except Exception as e:
+                warming_results["queries_failed"] += 1
+                warming_results["errors"].append(str(e))
+        
+        return warming_results
+    
+    def _get_current_month_period(self) -> TimePeriod:
+        """Get current month time period."""
+        now = datetime.now(timezone.utc)
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return TimePeriod(start=start, end=now)
+    
+    def _get_last_month_period(self) -> TimePeriod:
+        """Get last month time period."""
+        now = datetime.now(timezone.utc)
+        first_day_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        last_day_last_month = first_day_this_month - timedelta(days=1)
+        first_day_last_month = last_day_last_month.replace(day=1)
+        return TimePeriod(start=first_day_last_month, end=first_day_this_month)
+    
+    def _get_last_week_period(self) -> TimePeriod:
+        """Get last 7 days time period."""
+        now = datetime.now(timezone.utc)
+        week_ago = now - timedelta(days=7)
+        return TimePeriod(start=week_ago, end=now)
+    
+    def get_cache_statistics(self) -> Dict[str, Any]:
+        """
+        Get cache statistics for this client.
+        
+        Returns:
+            Dictionary with cache statistics
+        """
+        if not self.cache_manager:
+            return {"error": "No cache manager available"}
+        
+        return self.cache_manager.get_cache_stats()
+    
+    def clear_cache(self, pattern: Optional[str] = None) -> int:
+        """
+        Clear cache entries for this client.
+        
+        Args:
+            pattern: Optional pattern to match cache files
+            
+        Returns:
+            Number of cache files removed
+        """
+        if not self.cache_manager:
+            return 0
+        
+        return self.cache_manager.invalidate_cache(pattern)
+    
+    def prefetch_data(self, queries: List[QueryParameters]) -> Dict[str, Any]:
+        """
+        Prefetch data for multiple queries to warm the cache.
+        
+        Args:
+            queries: List of query parameters to prefetch
+            
+        Returns:
+            Dictionary with prefetch results
+        """
+        if not self.cache_manager:
+            return {"error": "No cache manager available"}
+        
+        results = {
+            "prefetched": 0,
+            "already_cached": 0,
+            "failed": 0,
+            "errors": []
+        }
+        
+        for query_params in queries:
+            try:
+                cache_key = self.cache_manager.generate_cache_key(query_params, self.profile or 'default')
+                
+                # Check if already cached
+                if self.cache_manager.get_cached_data(cache_key):
+                    results["already_cached"] += 1
+                else:
+                    # Fetch and cache
+                    self.get_cost_and_usage(query_params, use_cache=False)
+                    results["prefetched"] += 1
+                    
+            except Exception as e:
+                results["failed"] += 1
+                results["errors"].append(f"Query failed: {str(e)}")
+        
+        return results

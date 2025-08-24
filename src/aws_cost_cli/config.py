@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional, Union
 from dataclasses import asdict
 
 from .models import Config
+from .exceptions import ConfigurationError
 
 
 class ConfigManager:
@@ -84,9 +85,9 @@ class ConfigManager:
                     except yaml.YAMLError:
                         return json.loads(content) or {}
         except (yaml.YAMLError, json.JSONDecodeError) as e:
-            raise ValueError(f"Invalid configuration file format: {e}")
+            raise ConfigurationError(f"Invalid configuration file format: {e}", config_file=config_path)
         except Exception as e:
-            raise RuntimeError(f"Error reading configuration file: {e}")
+            raise ConfigurationError(f"Error reading configuration file: {e}", config_file=config_path)
     
     def _load_env_config(self) -> Dict[str, Any]:
         """Load configuration from environment variables."""
@@ -153,7 +154,7 @@ class ConfigManager:
                 else:
                     json.dump(config_dict, f, indent=2)
         except Exception as e:
-            raise RuntimeError(f"Error saving configuration file: {e}")
+            raise ConfigurationError(f"Error saving configuration file: {e}", config_file=str(path))
     
     def get_config(self) -> Optional[Config]:
         """Get the currently loaded configuration."""
@@ -168,15 +169,15 @@ class ConfigManager:
         # Validate LLM provider
         valid_providers = ["openai", "anthropic", "bedrock", "ollama"]
         if config.llm_provider not in valid_providers:
-            raise ValueError(f"Invalid LLM provider: {config.llm_provider}")
+            raise ConfigurationError(f"Invalid LLM provider: {config.llm_provider}")
         
         # Validate output format
         valid_formats = ["simple", "detailed", "json"]
         if config.output_format not in valid_formats:
-            raise ValueError(f"Invalid output format: {config.output_format}")
+            raise ConfigurationError(f"Invalid output format: {config.output_format}")
         
         # Validate cache TTL
         if config.cache_ttl < 0:
-            raise ValueError("Cache TTL must be non-negative")
+            raise ConfigurationError("Cache TTL must be non-negative")
         
         return True

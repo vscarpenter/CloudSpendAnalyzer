@@ -125,16 +125,20 @@ For relative dates:
 
 For date ranges like "from X to Y", use the full range including both dates.
 
-For queries asking about service breakdown, set group_by to ["SERVICE"].
+IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
+- "What services did I use?"
+- "List the services that cost money"
+- "Show me service breakdown"
+- "Which services did I spend money on?"
 
 Return only valid JSON in this format:
 {
-  "service": "Amazon Simple Storage Service",
+  "service": null,
   "start_date": "2025-07-01", 
   "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
-  "group_by": null
+  "group_by": ["SERVICE"]
 }"""
     
     def _parse_llm_response(self, content: str) -> Dict[str, Any]:
@@ -458,6 +462,21 @@ class FallbackParser:
             r'\bper\s+month\b': TimePeriodGranularity.MONTHLY,
             r'\bper\s+hour\b': TimePeriodGranularity.HOURLY,
         }
+        
+        # Patterns that indicate user wants service breakdown
+        self.service_breakdown_patterns = [
+            r'\bwhat\s+services?\b',
+            r'\blist.*services?\b',
+            r'\bwhich\s+services?\b',
+            r'\bshow.*services?\b',
+            r'\bservices?\s+did\s+i\s+use\b',
+            r'\bservices?\s+i\s+used\b',
+            r'\bbreakdown\s+by\s+service\b',
+            r'\bservice\s+breakdown\b',
+            r'\bper\s+service\b',
+            r'\bby\s+service\b',
+            r'\beach\s+service\b',
+        ]
     
     def parse_query(self, query: str) -> Dict[str, Any]:
         """Parse query using pattern matching fallback."""
@@ -469,7 +488,7 @@ class FallbackParser:
             "end_date": None,
             "granularity": self._extract_granularity(query_lower),
             "metrics": ["BlendedCost"],
-            "group_by": None
+            "group_by": self._extract_group_by(query_lower)
         }
         
         # Extract time period
@@ -494,6 +513,23 @@ class FallbackParser:
             if re.search(pattern, query, re.IGNORECASE):
                 return granularity.value
         return TimePeriodGranularity.MONTHLY.value
+    
+    def _extract_group_by(self, query: str) -> Optional[List[str]]:
+        """Extract group_by dimensions from query."""
+        # Check if user is asking for service breakdown
+        for pattern in self.service_breakdown_patterns:
+            if re.search(pattern, query, re.IGNORECASE):
+                return ["SERVICE"]
+        
+        # Check for other grouping patterns
+        if re.search(r'\bby\s+instance\s+type\b', query, re.IGNORECASE):
+            return ["INSTANCE_TYPE"]
+        elif re.search(r'\bby\s+region\b', query, re.IGNORECASE):
+            return ["REGION"]
+        elif re.search(r'\bby\s+availability\s+zone\b', query, re.IGNORECASE):
+            return ["AVAILABILITY_ZONE"]
+        
+        return None
     
     def _extract_time_period(self, query: str) -> tuple[Optional[datetime], Optional[datetime]]:
         """Extract time period from query."""

@@ -10,6 +10,7 @@ from src.aws_cost_cli.query_processor import (
     QueryParser, FallbackParser, OpenAIProvider, AnthropicProvider, OllamaProvider
 )
 from src.aws_cost_cli.models import QueryParameters, TimePeriod, TimePeriodGranularity, MetricType
+from src.aws_cost_cli.exceptions import LLMProviderError, QueryParsingError, ValidationError
 
 
 class TestFallbackParser:
@@ -23,13 +24,13 @@ class TestFallbackParser:
         """Test extracting EC2 service from query."""
         query = "How much did EC2 cost last month?"
         result = self.parser.parse_query(query)
-        assert result["service"] == "EC2"
+        assert result["service"] == "Amazon Elastic Compute Cloud - Compute"
     
     def test_extract_service_s3(self):
         """Test extracting S3 service from query."""
         query = "What's my S3 spending this year?"
         result = self.parser.parse_query(query)
-        assert result["service"] == "S3"
+        assert result["service"] == "Amazon Simple Storage Service"
     
     def test_extract_service_none(self):
         """Test when no service is mentioned."""
@@ -98,6 +99,19 @@ class TestFallbackParser:
         
         assert result["start_date"] is None
         assert result["end_date"] is None
+    
+    def test_extract_service_breakdown(self):
+        """Test extracting service breakdown request."""
+        queries = [
+            "What services did I use last month?",
+            "List the services that cost money",
+            "Show me service breakdown",
+            "Which services did I spend money on?"
+        ]
+        
+        for query in queries:
+            result = self.parser.parse_query(query)
+            assert result["group_by"] == ["SERVICE"], f"Failed for query: {query}"
 
 
 class TestOpenAIProvider:
@@ -157,7 +171,7 @@ class TestOpenAIProvider:
         mock_client.chat.completions.create.side_effect = Exception("API Error")
         mock_openai.return_value = mock_client
         
-        with pytest.raises(RuntimeError, match="OpenAI API error"):
+        with pytest.raises(LLMProviderError, match="OpenAI API error"):
             self.provider.parse_query("test query")
     
     def test_parse_llm_response_valid_json(self):
@@ -180,7 +194,7 @@ class TestOpenAIProvider:
         """Test handling of invalid JSON response."""
         content = "This is not valid JSON"
         
-        with pytest.raises(ValueError, match="Could not parse LLM response as JSON"):
+        with pytest.raises(QueryParsingError, match="Could not parse LLM response as JSON"):
             self.provider._parse_llm_response(content)
 
 
@@ -285,7 +299,7 @@ class TestOllamaProvider:
         mock_response.status_code = 500
         mock_post.return_value = mock_response
         
-        with pytest.raises(RuntimeError, match="Ollama API error"):
+        with pytest.raises(LLMProviderError, match="Ollama API error"):
             self.provider.parse_query("test query")
 
 
@@ -367,7 +381,7 @@ class TestQueryParser:
             result = parser.parse_query("EC2 costs last month")
         
         assert isinstance(result, QueryParameters)
-        assert result.service == 'EC2'
+        assert result.service == 'Amazon Elastic Compute Cloud - Compute'
         # Should have extracted time period from "last month"
         assert result.time_period is not None
     
@@ -379,23 +393,18 @@ class TestQueryParser:
         result = parser.parse_query("S3 costs this year")
         
         assert isinstance(result, QueryParameters)
-        assert result.service == 'S3'
+        assert result.service == 'Amazon Simple Storage Service'
         # Should have extracted time period from "this year"
         assert result.time_period is not None
     
     def test_parse_query_complete_failure(self):
-        """Test parsing when everything fails - should return defaults."""
+        """Test parsing when everything fails - should raise exception."""
         config = {}
         
         with patch.object(FallbackParser, 'parse_query', side_effect=Exception("Parse error")):
             parser = QueryParser(config)
-            result = parser.parse_query("invalid query")
-        
-        assert isinstance(result, QueryParameters)
-        # Should return default parameters
-        assert result.service is None
-        assert result.granularity == TimePeriodGranularity.MONTHLY
-        assert result.metrics == [MetricType.BLENDED_COST]
+            with pytest.raises(QueryParsingError, match="Failed to parse query"):
+                parser.parse_query("invalid query")
     
     def test_validate_parameters_valid(self):
         """Test validation of valid parameters."""
@@ -426,7 +435,8 @@ class TestQueryParser:
             )
         )
         
-        assert parser.validate_parameters(params) is False
+        with pytest.raises(ValidationError, match="Start date must be before end date"):
+            parser.validate_parameters(params)
     
     def test_convert_to_query_parameters_complete(self):
         """Test conversion of complete result dictionary."""

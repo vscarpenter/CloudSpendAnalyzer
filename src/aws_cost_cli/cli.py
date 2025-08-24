@@ -15,7 +15,21 @@ from .query_processor import QueryParser
 from .aws_client import AWSCostClient, CredentialManager
 from .cache_manager import CacheManager
 from .response_formatter import ResponseGenerator
+from .query_pipeline import QueryPipeline, QueryContext, QueryResult
 from .models import Config
+from .exceptions import (
+    AWSCostCLIError,
+    AWSCredentialsError,
+    AWSPermissionsError,
+    AWSAPIError,
+    NetworkError,
+    QueryParsingError,
+    LLMProviderError,
+    CacheError,
+    ConfigurationError,
+    ValidationError,
+    format_error_message
+)
 
 
 # Global console for rich output
@@ -61,198 +75,128 @@ def query(ctx, query: str, profile: Optional[str], fresh: bool, output_format: O
         aws-cost-cli query "Show me RDS spending for Q1" --fresh --format rich
     """
     try:
-        # Load configuration
-        config_manager = ConfigManager()
-        if config_file:
-            config = config_manager.load_config(config_file)
-        else:
-            config = config_manager.load_config()
-        
-        # Override format if specified
-        if output_format:
-            config.output_format = output_format.lower()
-        
-        # Initialize components
-        credential_manager = CredentialManager()
-        
-        # Validate AWS credentials
-        if not credential_manager.validate_credentials(profile):
-            console.print(Panel(
-                Text("❌ AWS credentials not found or invalid", style="bold red"),
-                title="Authentication Error",
-                border_style="red"
-            ))
-            console.print("\n💡 To set up AWS credentials:")
-            console.print("   1. Run: aws configure")
-            console.print("   2. Or set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables")
-            console.print("   3. Or use IAM roles if running on EC2")
-            sys.exit(1)
-        
-        # Initialize AWS client
-        aws_client = AWSCostClient(profile=profile)
-        
-        # Check permissions
-        if not aws_client.validate_permissions():
-            console.print(Panel(
-                Text("❌ Insufficient AWS permissions", style="bold red"),
-                title="Permission Error",
-                border_style="red"
-            ))
-            console.print("\n💡 Required IAM permissions:")
-            console.print("   - ce:GetCostAndUsage")
-            console.print("   - ce:GetDimensionValues")
-            console.print("   - ce:GetUsageReport")
-            console.print("   - organizations:ListAccounts (if using consolidated billing)")
-            sys.exit(1)
-        
-        # Initialize cache manager
-        cache_manager = CacheManager(ttl=config.cache_ttl)
-        
-        # Initialize query parser
-        query_parser = QueryParser(config.llm_config)
-        
-        # Parse the natural language query
-        if config.output_format != 'json':
-            console.print(f"🔍 Analyzing query: '{query}'")
-        
-        try:
-            query_params = query_parser.parse_query(query)
-        except Exception as e:
-            console.print(Panel(
-                Text(f"❌ Failed to parse query: {str(e)}", style="bold red"),
-                title="Query Parsing Error",
-                border_style="red"
-            ))
-            console.print("\n💡 Try rephrasing your query. Examples:")
-            console.print("   - 'How much did I spend on EC2 last month?'")
-            console.print("   - 'What are my total AWS costs this year?'")
-            console.print("   - 'Show me S3 spending for the last 3 months'")
-            sys.exit(1)
-        
-        # Validate parsed parameters
-        if not query_parser.validate_parameters(query_params):
-            console.print(Panel(
-                Text("❌ Invalid query parameters extracted", style="bold red"),
-                title="Validation Error",
-                border_style="red"
-            ))
-            sys.exit(1)
-        
-        # Generate cache key
-        cache_key = cache_manager.generate_cache_key(query_params, profile or 'default')
-        
-        # Try to get cached data first (unless fresh is requested)
-        cost_data = None
-        if not fresh:
-            cost_data = cache_manager.get_cached_data(cache_key)
-            if cost_data and config.output_format != 'json':
-                console.print("📋 Using cached data")
-        
-        # Fetch fresh data if needed
-        if cost_data is None:
-            if config.output_format != 'json':
-                console.print("☁️  Fetching data from AWS...")
-            
-            try:
-                cost_data = aws_client.get_cost_and_usage(query_params)
-                
-                # Cache the results
-                cache_manager.cache_data(cache_key, cost_data)
-                
-            except Exception as e:
-                console.print(Panel(
-                    Text(f"❌ Failed to fetch AWS cost data: {str(e)}", style="bold red"),
-                    title="AWS API Error",
-                    border_style="red"
-                ))
-                console.print("\n💡 Common issues:")
-                console.print("   - Check your AWS credentials and permissions")
-                console.print("   - Verify the time period is valid")
-                console.print("   - Ensure Cost Explorer is enabled in your AWS account")
-                sys.exit(1)
-        
-        # Initialize response generator
-        llm_provider = None
-        if config.llm_config.get('provider') and config.output_format == 'llm':
-            try:
-                # Initialize LLM provider based on config
-                if config.llm_config['provider'] == 'openai':
-                    from .query_processor import OpenAIProvider
-                    llm_provider = OpenAIProvider(
-                        config.llm_config.get('api_key', ''),
-                        config.llm_config.get('model', 'gpt-3.5-turbo')
-                    )
-                elif config.llm_config['provider'] == 'anthropic':
-                    from .query_processor import AnthropicProvider
-                    llm_provider = AnthropicProvider(
-                        config.llm_config.get('api_key', ''),
-                        config.llm_config.get('model', 'claude-3-haiku-20240307')
-                    )
-                elif config.llm_config['provider'] == 'ollama':
-                    from .query_processor import OllamaProvider
-                    llm_provider = OllamaProvider(
-                        config.llm_config.get('model', 'llama2'),
-                        config.llm_config.get('base_url', 'http://localhost:11434')
-                    )
-            except Exception as e:
-                if config.output_format != 'json':
-                    console.print(f"⚠️  LLM provider initialization failed: {e}")
-                    console.print("   Falling back to simple formatting")
-        
-        response_generator = ResponseGenerator(
-            llm_provider=llm_provider,
-            output_format=config.output_format
+        # Create query context
+        context = QueryContext(
+            original_query=query,
+            profile=profile,
+            fresh_data=fresh,
+            output_format=output_format.lower() if output_format else None,
+            debug=ctx.obj.get('debug', False)
         )
         
-        # Generate and display response
-        if config.output_format == 'json':
-            # JSON output for programmatic use
-            output = {
-                'query': query,
-                'total_cost': {
-                    'amount': float(cost_data.total_cost.amount),
-                    'currency': cost_data.total_cost.unit
-                },
-                'time_period': {
-                    'start': cost_data.time_period.start.isoformat(),
-                    'end': cost_data.time_period.end.isoformat()
-                },
-                'results': []
-            }
-            
-            for result in cost_data.results:
-                result_data = {
-                    'period': {
-                        'start': result.time_period.start.isoformat(),
-                        'end': result.time_period.end.isoformat()
+        # Initialize pipeline
+        pipeline = QueryPipeline(config_path=config_file)
+        
+        # Override output format if specified
+        if output_format:
+            pipeline.config.output_format = output_format.lower()
+            context.output_format = output_format.lower()
+        else:
+            context.output_format = pipeline.config.output_format
+        
+        # Process query through pipeline
+        if context.output_format != 'json':
+            console.print(f"🔍 Processing query: '{query}'")
+        
+        result = pipeline.process_query(context)
+        
+        # Handle result
+        if result.success:
+            if context.output_format == 'json':
+                # JSON output for programmatic use
+                output = {
+                    'query': query,
+                    'success': True,
+                    'total_cost': {
+                        'amount': float(result.cost_data.total_cost.amount),
+                        'currency': result.cost_data.total_cost.unit
                     },
-                    'total': {
-                        'amount': float(result.total.amount),
-                        'currency': result.total.unit
+                    'time_period': {
+                        'start': result.cost_data.time_period.start.isoformat(),
+                        'end': result.cost_data.time_period.end.isoformat()
                     },
-                    'estimated': result.estimated,
-                    'groups': []
+                    'metadata': result.metadata,
+                    'results': []
                 }
                 
-                for group in result.groups:
-                    group_data = {
-                        'keys': group.keys,
-                        'metrics': {}
+                for cost_result in result.cost_data.results:
+                    result_data = {
+                        'period': {
+                            'start': cost_result.time_period.start.isoformat(),
+                            'end': cost_result.time_period.end.isoformat()
+                        },
+                        'total': {
+                            'amount': float(cost_result.total.amount),
+                            'currency': cost_result.total.unit
+                        },
+                        'estimated': cost_result.estimated,
+                        'groups': []
                     }
-                    for metric_name, cost_amount in group.metrics.items():
-                        group_data['metrics'][metric_name] = {
-                            'amount': float(cost_amount.amount),
-                            'currency': cost_amount.unit
+                    
+                    for group in cost_result.groups:
+                        group_data = {
+                            'keys': group.keys,
+                            'metrics': {}
                         }
-                    result_data['groups'].append(group_data)
+                        for metric_name, cost_amount in group.metrics.items():
+                            group_data['metrics'][metric_name] = {
+                                'amount': float(cost_amount.amount),
+                                'currency': cost_amount.unit
+                            }
+                        result_data['groups'].append(group_data)
+                    
+                    output['results'].append(result_data)
                 
-                output['results'].append(result_data)
-            
-            click.echo(json.dumps(output, indent=2))
+                click.echo(json.dumps(output, indent=2))
+            else:
+                # Human-readable output
+                console.print(result.formatted_response)
+                
+                # Show processing info if debug mode
+                if context.debug:
+                    console.print(f"\n📊 Processing time: {result.processing_time_ms:.1f}ms")
+                    if result.cache_hit:
+                        console.print("📋 Data source: Cache")
+                    else:
+                        console.print("☁️  Data source: AWS API")
+                    
+                    if result.llm_used:
+                        console.print("🤖 Query parsing: LLM")
+                    elif result.fallback_used:
+                        console.print("🔧 Query parsing: Fallback")
         else:
-            # Human-readable output
-            response = response_generator.format_response(cost_data, query, query_params)
-            console.print(response)
+            # Handle error
+            error = result.error
+            
+            if context.output_format == 'json':
+                output = {
+                    'query': query,
+                    'success': False,
+                    'error': {
+                        'type': error.__class__.__name__,
+                        'message': error.message,
+                        'code': getattr(error, 'error_code', None)
+                    },
+                    'metadata': result.metadata
+                }
+                click.echo(json.dumps(output, indent=2))
+            else:
+                console.print(Panel(
+                    Text(error.message, style="bold red"),
+                    title="Error",
+                    border_style="red"
+                ))
+                console.print(format_error_message(error, include_suggestions=True))
+                
+                # Show suggestions for ambiguous queries
+                if isinstance(error, QueryParsingError):
+                    suggestions = pipeline.handle_ambiguous_query(context)
+                    if suggestions:
+                        console.print("\n💡 Try these suggestions:")
+                        for suggestion in suggestions:
+                            console.print(f"   • {suggestion}")
+            
+            sys.exit(1)
         
     except KeyboardInterrupt:
         console.print("\n👋 Query cancelled by user")
@@ -266,6 +210,101 @@ def query(ctx, query: str, profile: Optional[str], fresh: bool, output_format: O
         if ctx.obj.get('debug'):
             import traceback
             console.print(traceback.format_exc())
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument('partial_query', required=False)
+@click.option(
+    '--config-file', '-c',
+    type=click.Path(exists=True),
+    help='Path to configuration file'
+)
+def suggest(partial_query: Optional[str], config_file: Optional[str]):
+    """Get query suggestions based on partial input.
+    
+    Examples:
+        aws-cost-cli suggest "EC2"
+        aws-cost-cli suggest "last month"
+        aws-cost-cli suggest
+    """
+    try:
+        # Initialize pipeline
+        pipeline = QueryPipeline(config_path=config_file)
+        
+        # Get suggestions
+        suggestions = pipeline.get_query_suggestions(partial_query or "")
+        
+        console.print(Panel(
+            Text("Query Suggestions", style="bold blue"),
+            border_style="blue"
+        ))
+        
+        if partial_query:
+            console.print(f"💡 Suggestions for '{partial_query}':")
+        else:
+            console.print("💡 Common query examples:")
+        
+        for i, suggestion in enumerate(suggestions, 1):
+            console.print(f"   {i}. {suggestion}")
+        
+        console.print("\n🔍 Use these examples as templates for your own queries!")
+        
+    except Exception as e:
+        console.print(Panel(
+            Text(f"❌ Failed to get suggestions: {str(e)}", style="bold red"),
+            title="Error",
+            border_style="red"
+        ))
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    '--config-file', '-c',
+    type=click.Path(exists=True),
+    help='Path to configuration file'
+)
+def pipeline_status(config_file: Optional[str]):
+    """Show pipeline status and health."""
+    try:
+        # Initialize pipeline
+        pipeline = QueryPipeline(config_path=config_file)
+        
+        # Get status
+        status = pipeline.get_pipeline_status()
+        
+        console.print(Panel(
+            Text("Pipeline Status", style="bold blue"),
+            border_style="blue"
+        ))
+        
+        # Component status
+        console.print("🔧 Components:")
+        console.print(f"   Config loaded: {'✅' if status['config_loaded'] else '❌'}")
+        console.print(f"   Cache manager: {'✅' if status['cache_manager_initialized'] else '❌'}")
+        console.print(f"   Query parser: {'✅' if status['query_parser_initialized'] else '❌'}")
+        console.print(f"   AWS client: {'✅' if status['aws_client_initialized'] else '❌'}")
+        console.print(f"   Response generator: {'✅' if status['response_generator_initialized'] else '❌'}")
+        
+        # Health status
+        console.print("\n🏥 Health:")
+        if 'cache_healthy' in status:
+            console.print(f"   Cache: {'✅' if status['cache_healthy'] else '❌'}")
+            if status.get('cache_entries'):
+                console.print(f"   Cache entries: {status['cache_entries']}")
+        
+        if 'aws_service_healthy' in status:
+            console.print(f"   AWS service: {'✅' if status['aws_service_healthy'] else '❌'}")
+            if status.get('aws_response_time_ms'):
+                console.print(f"   AWS response time: {status['aws_response_time_ms']:.1f}ms")
+        
+    except Exception as e:
+        console.print(Panel(
+            Text(f"❌ Failed to get pipeline status: {str(e)}", style="bold red"),
+            title="Error",
+            border_style="red"
+        ))
         sys.exit(1)
 
 
@@ -484,14 +523,18 @@ def show_config(config_file: Optional[str]):
 
 @cli.command()
 @click.confirmation_option(prompt='Are you sure you want to clear the cache?')
-def clear_cache():
+@click.option(
+    '--pattern',
+    help='Pattern to match cache files (clears all if not specified)'
+)
+def clear_cache(pattern: Optional[str]):
     """Clear the cost data cache."""
     try:
         cache_manager = CacheManager()
-        cache_manager.clear_cache()
+        removed_count = cache_manager.clear_cache() if not pattern else cache_manager.invalidate_cache(pattern)
         
         console.print(Panel(
-            Text("✅ Cache cleared successfully", style="bold green"),
+            Text(f"✅ Cache cleared successfully ({removed_count} files removed)", style="bold green"),
             title="Cache Management",
             border_style="green"
         ))
@@ -499,6 +542,142 @@ def clear_cache():
     except Exception as e:
         console.print(Panel(
             Text(f"❌ Failed to clear cache: {str(e)}", style="bold red"),
+            title="Error",
+            border_style="red"
+        ))
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    '--profile', '-p',
+    help='AWS profile to use'
+)
+def cache_stats(profile: Optional[str]):
+    """Show cache statistics."""
+    try:
+        cache_manager = CacheManager()
+        stats = cache_manager.get_cache_stats()
+        
+        console.print(Panel(
+            Text("Cache Statistics", style="bold blue"),
+            border_style="blue"
+        ))
+        
+        console.print(f"📊 Total entries: {stats['total_entries']}")
+        console.print(f"✅ Valid entries: {stats['valid_entries']}")
+        console.print(f"⏰ Expired entries: {stats['expired_entries']}")
+        console.print(f"💾 Cache size: {stats['cache_size_bytes']:,} bytes")
+        
+        if stats['oldest_entry']:
+            console.print(f"📅 Oldest entry: {stats['oldest_entry']}")
+        if stats['newest_entry']:
+            console.print(f"🆕 Newest entry: {stats['newest_entry']}")
+        
+    except Exception as e:
+        console.print(Panel(
+            Text(f"❌ Failed to get cache statistics: {str(e)}", style="bold red"),
+            title="Error",
+            border_style="red"
+        ))
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    '--profile', '-p',
+    help='AWS profile to use'
+)
+@click.option(
+    '--config-file', '-c',
+    type=click.Path(exists=True),
+    help='Path to configuration file'
+)
+def warm_cache(profile: Optional[str], config_file: Optional[str]):
+    """Warm the cache with common queries."""
+    try:
+        # Load configuration
+        config_manager = ConfigManager()
+        if config_file:
+            config = config_manager.load_config(config_file)
+        else:
+            config = config_manager.load_config()
+        
+        # Initialize components
+        credential_manager = CredentialManager()
+        
+        # Validate AWS credentials
+        if not credential_manager.validate_credentials(profile):
+            raise AWSCredentialsError(profile=profile)
+        
+        # Initialize cache manager and AWS client
+        cache_manager = CacheManager(default_ttl=config.cache_ttl)
+        aws_client = AWSCostClient(profile=profile, cache_manager=cache_manager)
+        
+        # Check permissions
+        if not aws_client.validate_permissions():
+            raise AWSPermissionsError()
+        
+        console.print("🔥 Warming cache with common queries...")
+        
+        # Warm the cache
+        results = aws_client.warm_cache_for_common_queries()
+        
+        if "error" in results:
+            console.print(Panel(
+                Text(f"❌ {results['error']}", style="bold red"),
+                title="Cache Warming Error",
+                border_style="red"
+            ))
+            sys.exit(1)
+        
+        console.print(Panel(
+            Text("✅ Cache warming completed", style="bold green"),
+            title="Cache Management",
+            border_style="green"
+        ))
+        
+        console.print(f"🔥 Queries warmed: {results['queries_warmed']}")
+        console.print(f"❌ Queries failed: {results['queries_failed']}")
+        
+        if results['errors']:
+            console.print("\n⚠️  Errors encountered:")
+            for error in results['errors']:
+                console.print(f"   • {error}")
+        
+    except (AWSCredentialsError, AWSPermissionsError, AWSAPIError, NetworkError) as e:
+        console.print(Panel(
+            Text(e.message, style="bold red"),
+            title="Error",
+            border_style="red"
+        ))
+        console.print(format_error_message(e, include_suggestions=True))
+        sys.exit(1)
+    except Exception as e:
+        console.print(Panel(
+            Text(f"❌ Failed to warm cache: {str(e)}", style="bold red"),
+            title="Error",
+            border_style="red"
+        ))
+        sys.exit(1)
+
+
+@cli.command()
+def cleanup_cache():
+    """Clean up expired cache entries."""
+    try:
+        cache_manager = CacheManager()
+        removed_count = cache_manager.cleanup_expired_cache()
+        
+        console.print(Panel(
+            Text(f"✅ Cache cleanup completed ({removed_count} expired entries removed)", style="bold green"),
+            title="Cache Management",
+            border_style="green"
+        ))
+        
+    except Exception as e:
+        console.print(Panel(
+            Text(f"❌ Failed to cleanup cache: {str(e)}", style="bold red"),
             title="Error",
             border_style="red"
         ))
