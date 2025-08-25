@@ -129,6 +129,11 @@ For relative dates:
 - "this year" = 2025 (2025-01-01 to 2025-08-24)
 - "last year" = 2024 (2024-01-01 to 2025-01-01)
 
+For specific years (IMPORTANT - use full year ranges):
+- "2025" or "all of 2025" or "for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
+- "2024" or "all of 2024" or "for 2024" = Full year 2024 (2024-01-01 to 2025-01-01)
+- "S3 costs for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
+
 For quarters:
 - "Q1 2025" = 2025-01-01 to 2025-04-01
 - "Q2 2025" = 2025-04-01 to 2025-07-01
@@ -680,6 +685,13 @@ class FallbackParser:
             r'\bjuly\s+2025\b': self._july_2025,
             r'\bin\s+july\s+2025\b': self._july_2025,
             r'\bjuly\b': self._july_current_or_last,
+            # Full year patterns
+            r'\b2025\b': self._full_year_2025,
+            r'\bfor\s+2025\b': self._full_year_2025,
+            r'\ball\s+of\s+2025\b': self._full_year_2025,
+            r'\b2024\b': self._full_year_2024,
+            r'\bfor\s+2024\b': self._full_year_2024,
+            r'\ball\s+of\s+2024\b': self._full_year_2024,
             # Quarter patterns
             r'\bq1\s+2025\b': self._q1_2025,
             r'\bq2\s+2025\b': self._q2_2025,
@@ -915,6 +927,18 @@ class FallbackParser:
         """Get fiscal year 2025 (assuming January start)."""
         start = datetime(2025, 1, 1, tzinfo=timezone.utc)
         end = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        return start, end
+    
+    def _full_year_2025(self) -> tuple[datetime, datetime]:
+        """Get full calendar year 2025."""
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        return start, end
+    
+    def _full_year_2024(self) -> tuple[datetime, datetime]:
+        """Get full calendar year 2024."""
+        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 1, 1, tzinfo=timezone.utc)
         return start, end
     
     def _extract_date_range_type(self, query: str) -> Optional[str]:
