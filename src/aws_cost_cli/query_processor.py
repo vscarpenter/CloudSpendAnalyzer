@@ -291,21 +291,60 @@ For relative dates:
 - "this year" = 2025 (2025-01-01 to 2025-08-24)
 - "last year" = 2024 (2024-01-01 to 2025-01-01)
 
+For specific years (IMPORTANT - use full year ranges):
+- "2025" or "all of 2025" or "for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
+- "2024" or "all of 2024" or "for 2024" = Full year 2024 (2024-01-01 to 2025-01-01)
+- "S3 costs for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
+
+For quarters:
+- "Q1 2025" = 2025-01-01 to 2025-04-01
+- "Q2 2025" = 2025-04-01 to 2025-07-01
+- "Q3 2025" = 2025-07-01 to 2025-10-01
+- "Q4 2025" = 2025-10-01 to 2026-01-01
+- "this quarter" = Q3 2025 (2025-07-01 to 2025-10-01)
+- "last quarter" = Q2 2025 (2025-04-01 to 2025-07-01)
+
+For fiscal years (assuming January start unless specified):
+- "FY2025" = 2025-01-01 to 2026-01-01
+- "fiscal year 2025" = 2025-01-01 to 2026-01-01
+
 For specific months like "july 2025" or "in july 2025":
 - Use the full month range: 2025-07-01 to 2025-08-01 (end date is first day of next month)
 
 For date ranges like "from X to Y", use the full range including both dates.
 
+For trend analysis queries:
+- "compared to last month" → trend_analysis: "MONTH_OVER_MONTH"
+- "vs last year" → trend_analysis: "YEAR_OVER_YEAR"
+- "compared to last quarter" → trend_analysis: "QUARTER_OVER_QUARTER"
+- "trend analysis" → trend_analysis: "PERIOD_OVER_PERIOD"
+
+For forecast queries:
+- "forecast", "predict", "projection" → include_forecast: true
+- "next 6 months" → forecast_months: 6
+
+IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
+- "What services did I use?"
+- "List the services that cost money"
+- "Show me service breakdown"
+- "Which services did I spend money on?"
+
 For queries asking about service breakdown, set group_by to ["SERVICE"].
 
 Return only valid JSON in this format:
 {
-  "service": "Amazon Elastic Compute Cloud - Compute",
+  "service": null,
   "start_date": "2025-07-01", 
   "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
-  "group_by": null
+  "group_by": ["SERVICE"],
+  "date_range_type": "QUARTER",
+  "fiscal_year_start_month": 1,
+  "trend_analysis": "MONTH_OVER_MONTH",
+  "include_forecast": false,
+  "forecast_months": 3,
+  "cost_allocation_tags": null
 }"""
     
     def _parse_llm_response(self, content: str) -> Dict[str, Any]:
@@ -487,21 +526,60 @@ For relative dates:
 - "this year" = 2025 (2025-01-01 to 2025-08-24)
 - "last year" = 2024 (2024-01-01 to 2025-01-01)
 
+For specific years (IMPORTANT - use full year ranges):
+- "2025" or "all of 2025" or "for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
+- "2024" or "all of 2024" or "for 2024" = Full year 2024 (2024-01-01 to 2025-01-01)
+- "S3 costs for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
+
+For quarters:
+- "Q1 2025" = 2025-01-01 to 2025-04-01
+- "Q2 2025" = 2025-04-01 to 2025-07-01
+- "Q3 2025" = 2025-07-01 to 2025-10-01
+- "Q4 2025" = 2025-10-01 to 2026-01-01
+- "this quarter" = Q3 2025 (2025-07-01 to 2025-10-01)
+- "last quarter" = Q2 2025 (2025-04-01 to 2025-07-01)
+
+For fiscal years (assuming January start unless specified):
+- "FY2025" = 2025-01-01 to 2026-01-01
+- "fiscal year 2025" = 2025-01-01 to 2026-01-01
+
 For specific months like "july 2025" or "in july 2025":
 - Use the full month range: 2025-07-01 to 2025-08-01 (end date is first day of next month)
 
 For date ranges like "from X to Y", use the full range including both dates.
 
+For trend analysis queries:
+- "compared to last month" → trend_analysis: "MONTH_OVER_MONTH"
+- "vs last year" → trend_analysis: "YEAR_OVER_YEAR"
+- "compared to last quarter" → trend_analysis: "QUARTER_OVER_QUARTER"
+- "trend analysis" → trend_analysis: "PERIOD_OVER_PERIOD"
+
+For forecast queries:
+- "forecast", "predict", "projection" → include_forecast: true
+- "next 6 months" → forecast_months: 6
+
+IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
+- "What services did I use?"
+- "List the services that cost money"
+- "Show me service breakdown"
+- "Which services did I spend money on?"
+
 For queries asking about service breakdown, set group_by to ["SERVICE"].
 
 Return only valid JSON in this format:
 {
-  "service": "Amazon Elastic Compute Cloud - Compute",
+  "service": null,
   "start_date": "2025-07-01", 
   "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
-  "group_by": null
+  "group_by": ["SERVICE"],
+  "date_range_type": "QUARTER",
+  "fiscal_year_start_month": 1,
+  "trend_analysis": "MONTH_OVER_MONTH",
+  "include_forecast": false,
+  "forecast_months": 3,
+  "cost_allocation_tags": null
 }"""
     
     def _parse_llm_response(self, content: str) -> Dict[str, Any]:
@@ -614,21 +692,60 @@ For relative dates:
 - "this year" = 2025 (2025-01-01 to 2025-08-24)
 - "last year" = 2024 (2024-01-01 to 2025-01-01)
 
+For specific years (IMPORTANT - use full year ranges):
+- "2025" or "all of 2025" or "for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
+- "2024" or "all of 2024" or "for 2024" = Full year 2024 (2024-01-01 to 2025-01-01)
+- "S3 costs for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
+
+For quarters:
+- "Q1 2025" = 2025-01-01 to 2025-04-01
+- "Q2 2025" = 2025-04-01 to 2025-07-01
+- "Q3 2025" = 2025-07-01 to 2025-10-01
+- "Q4 2025" = 2025-10-01 to 2026-01-01
+- "this quarter" = Q3 2025 (2025-07-01 to 2025-10-01)
+- "last quarter" = Q2 2025 (2025-04-01 to 2025-07-01)
+
+For fiscal years (assuming January start unless specified):
+- "FY2025" = 2025-01-01 to 2026-01-01
+- "fiscal year 2025" = 2025-01-01 to 2026-01-01
+
 For specific months like "july 2025" or "in july 2025":
 - Use the full month range: 2025-07-01 to 2025-08-01 (end date is first day of next month)
 
 For date ranges like "from X to Y", use the full range including both dates.
 
+For trend analysis queries:
+- "compared to last month" → trend_analysis: "MONTH_OVER_MONTH"
+- "vs last year" → trend_analysis: "YEAR_OVER_YEAR"
+- "compared to last quarter" → trend_analysis: "QUARTER_OVER_QUARTER"
+- "trend analysis" → trend_analysis: "PERIOD_OVER_PERIOD"
+
+For forecast queries:
+- "forecast", "predict", "projection" → include_forecast: true
+- "next 6 months" → forecast_months: 6
+
+IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
+- "What services did I use?"
+- "List the services that cost money"
+- "Show me service breakdown"
+- "Which services did I spend money on?"
+
 For queries asking about service breakdown, set group_by to ["SERVICE"].
 
 Return only valid JSON in this format:
 {
-  "service": "Amazon Elastic Compute Cloud - Compute",
+  "service": null,
   "start_date": "2025-07-01", 
   "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
-  "group_by": null
+  "group_by": ["SERVICE"],
+  "date_range_type": "QUARTER",
+  "fiscal_year_start_month": 1,
+  "trend_analysis": "MONTH_OVER_MONTH",
+  "include_forecast": false,
+  "forecast_months": 3,
+  "cost_allocation_tags": null
 }"""
     
     def _parse_llm_response(self, content: str) -> Dict[str, Any]:

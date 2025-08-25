@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AWS Cost Explorer CLI is a Python command-line tool that enables natural language querying of AWS cost and billing data. The application integrates with multiple LLM providers (OpenAI, Anthropic, Bedrock, Ollama) to parse user queries and format responses naturally.
+AWS Cost Explorer CLI is a comprehensive Python command-line tool that enables natural language querying of AWS cost and billing data. The application integrates with multiple LLM providers (OpenAI, Anthropic, Bedrock, Ollama) to parse user queries, analyze trends, provide optimization recommendations, and format responses naturally. It includes advanced features like data export, interactive query building, cost optimization analysis, and performance monitoring.
 
 ## Common Commands
 
@@ -61,6 +61,7 @@ The application follows a modular architecture with clear separation of concerns
   - `QueryParameters`: Natural language query parsing results
   - `CostData`, `CostResult`: AWS cost data representations
   - `TimePeriod`, `MetricType`: Time and metric type definitions
+  - `TrendData`, `ForecastData`: Trend analysis and forecasting models
 
 - **`config.py`**: Configuration management system (`ConfigManager`)
   - Hierarchical config loading: defaults → file → environment variables
@@ -76,23 +77,91 @@ The application follows a modular architecture with clear separation of concerns
   - Abstract `LLMProvider` base class
   - Provider implementations: `OpenAIProvider`, `AnthropicProvider`, `BedrockProvider`, `OllamaProvider`
   - Parses natural language queries into structured `QueryParameters`
+  - Enhanced year parsing for full year queries (e.g., "S3 costs for 2025")
 
 - **`cache_manager.py`**: File-based caching system with TTL
   - Hash-based cache keys from query parameters
   - Configurable cache directory and TTL
   - JSON serialization with custom datetime handling
+  - Compression support for reduced storage
 
 - **`response_formatter.py`**: Response formatting system
   - `LLMResponseFormatter`: Natural language response generation
   - `SimpleFormatter`, `DetailedFormatter`: Structured output formats
   - Rich terminal output integration
 
+### Advanced Features
+
+- **`query_pipeline.py`**: End-to-end query processing pipeline
+  - `QueryPipeline`: Orchestrates the complete query flow
+  - `QueryContext`, `QueryResult`: Request/response handling
+  - Error handling and retry logic
+  - Performance optimization options
+
+- **`cost_optimizer.py`**: Cost optimization analysis and recommendations
+  - `CostOptimizer`: Analyzes cost data for optimization opportunities
+  - `OptimizationRecommendation`: Individual recommendation data structure
+  - Support for rightsizing, reserved instances, savings plans analysis
+  - Cost anomaly detection and budget variance analysis
+
+- **`data_exporter.py`**: Multi-format data export capabilities
+  - `ExportManager`: Coordinates different export formats
+  - `CSVExporter`, `JSONExporter`, `ExcelExporter`: Format-specific exporters
+  - Email integration for automated report distribution
+  - Template-based export formatting
+
+- **`interactive_query_builder.py`**: Guided query construction interface
+  - `InteractiveQueryBuilder`: Step-by-step query building
+  - `QueryTemplate`: Pre-built query templates for common use cases
+  - Query history and favorites management
+  - Real-time query validation and suggestions
+
+- **`trend_analysis.py`**: Cost trend analysis and forecasting
+  - `TrendAnalyzer`: Period-over-period comparison analysis
+  - `CostForecaster`: Predictive cost modeling
+  - Statistical analysis (moving averages, regression)
+  - Seasonal pattern detection
+
+- **`performance.py`**: Performance optimization and monitoring
+  - `PerformanceMonitor`: Query performance tracking
+  - `QueryOptimizer`: Automatic query optimization
+  - Parallel execution for large date ranges
+  - Compression and caching optimizations
+
+### Supporting Components
+
+- **`cli.py`**: Main CLI interface with click framework integration
+  - Command groups for query, export, optimization, and interactive modes
+  - Rich terminal output formatting
+  - Comprehensive error handling and user feedback
+
+- **`exceptions.py`**: Centralized exception handling
+  - Custom exception types for different error categories
+  - Error message formatting and user-friendly output
+  - Logging integration for debugging
+
+- **`date_utils.py`**: Date parsing and manipulation utilities
+  - Natural language date parsing
+  - Business calendar support
+  - Time zone handling
+
+- **`optimization_formatter.py`**: Specialized formatting for optimization reports
+  - Recommendation prioritization and grouping
+  - Rich table formatting for optimization results
+  - Export formatting for optimization data
+
 ### Data Flow
 
-1. User query → `query_processor` (LLM parsing) → `QueryParameters`
-2. `QueryParameters` → `cache_manager` (check cache) → cached result or AWS API call
-3. AWS API → `aws_client` → raw cost data → `CostData` models
-4. `CostData` → `response_formatter` (LLM or structured) → formatted response
+1. User input → `cli.py` → route to appropriate command handler
+2. Query command → `query_pipeline.py` → orchestrate complete flow:
+   - `query_processor` (LLM parsing) → `QueryParameters`
+   - `cache_manager` (check cache) → cached result or AWS API call
+   - `aws_client` → raw cost data → `CostData` models
+   - Optional: `trend_analysis` → trend calculations and forecasts
+   - `response_formatter` → formatted response
+3. Export command → `data_exporter` → multi-format output files
+4. Optimization command → `cost_optimizer` → recommendations and analysis
+5. Interactive command → `interactive_query_builder` → guided query construction
 
 ### Configuration Hierarchy
 
@@ -111,9 +180,81 @@ The application uses a plugin-style architecture for LLM providers:
 
 ## Key Dependencies
 
+### Core Dependencies
 - **boto3**: AWS SDK for Cost Explorer API integration
 - **click**: CLI framework (entry point in setup.py)
-- **rich**: Terminal formatting and output
-- **pyyaml**: Configuration file parsing
-- **openai/anthropic**: LLM provider libraries
-- **pytest/black/flake8/mypy**: Development tools
+- **rich**: Terminal formatting and output with tables, panels, and progress bars
+- **pyyaml**: Configuration file parsing (YAML/JSON support)
+- **requests**: HTTP client for API calls
+
+### LLM Provider Libraries
+- **openai**: OpenAI GPT integration
+- **anthropic**: Anthropic Claude integration
+- **boto3** (Bedrock): AWS Bedrock LLM services
+
+### Export Dependencies
+- **openpyxl**: Excel file export support (.xlsx format)
+- Standard library: **csv**, **json**, **smtplib** (email integration)
+
+### Development Tools
+- **pytest**: Testing framework with coverage support
+- **black**: Code formatting
+- **flake8**: Code linting
+- **mypy**: Static type checking
+
+## CLI Commands
+
+The application provides several command groups:
+
+### Basic Query Commands
+```bash
+# Basic cost queries
+aws-cost-cli query "Show me EC2 costs for last month"
+aws-cost-cli query "S3 storage costs for 2025" --format detailed
+
+# Query with specific profiles and options
+aws-cost-cli query "RDS costs" --profile production --fresh
+```
+
+### Export Commands
+```bash
+# Export to different formats
+aws-cost-cli export "EC2 costs last quarter" --format csv --output costs.csv
+aws-cost-cli export "All services 2025" --format excel --output report.xlsx
+aws-cost-cli export "S3 costs" --format json --email team@company.com
+```
+
+### Optimization Commands
+```bash
+# Cost optimization analysis
+aws-cost-cli optimize --type rightsizing
+aws-cost-cli optimize --type reserved_instances --service EC2
+aws-cost-cli optimize --severity high --format detailed
+```
+
+### Interactive Mode
+```bash
+# Launch interactive query builder
+aws-cost-cli interactive
+
+# Use specific templates
+aws-cost-cli interactive --template "Monthly Service Breakdown"
+```
+
+### Performance and Monitoring
+```bash
+# Enable performance monitoring
+aws-cost-cli query "Large query" --performance --parallel
+aws-cost-cli query "EC2 costs 2025" --max-chunk-days 30 --performance
+```
+
+## Documentation
+
+The project includes comprehensive documentation:
+
+- **EXPORT_GUIDE.md**: Complete guide to data export features and formats
+- **INTERACTIVE_QUERY_BUILDER.md**: Interactive query building documentation
+- **PERFORMANCE_GUIDE.md**: Performance optimization and monitoring guide
+- **USER_GUIDE.md**: End-user documentation for all features
+- **CONTRIBUTING.md**: Development and contribution guidelines
+- **SECURITY.md**: Security practices and vulnerability reporting
