@@ -78,6 +78,8 @@ The application follows a modular architecture with clear separation of concerns
   - Provider implementations: `OpenAIProvider`, `AnthropicProvider`, `BedrockProvider`, `OllamaProvider`
   - Parses natural language queries into structured `QueryParameters`
   - Enhanced year parsing for full year queries (e.g., "S3 costs for 2025")
+  - Consistent date parsing across all LLM providers with fallback parser support
+  - Comprehensive system prompts with trend analysis and forecasting capabilities
 
 - **`cache_manager.py`**: File-based caching system with TTL
   - Hash-based cache keys from query parameters
@@ -176,7 +178,10 @@ The application uses a plugin-style architecture for LLM providers:
 - Each provider implements the `LLMProvider` abstract interface
 - Providers handle their own authentication and API calls
 - Query parsing and response formatting are provider-agnostic
-- Fallback mechanisms for provider failures
+- Consistent system prompts across all providers for reliable date parsing
+- Fallback mechanisms for provider failures with robust pattern matching
+- Support for complex queries including trend analysis and forecasting
+- Comprehensive error handling and validation for all providers
 
 ## Key Dependencies
 
@@ -248,6 +253,19 @@ aws-cost-cli query "Large query" --performance --parallel
 aws-cost-cli query "EC2 costs 2025" --max-chunk-days 30 --performance
 ```
 
+## Recent Improvements
+
+### Date Parsing Enhancement (Latest)
+- **Fixed full year parsing consistency**: All LLM providers now correctly interpret queries like "S3 costs for 2025" as full calendar year (2025-01-01 to 2026-01-01)
+- **Standardized system prompts**: Ensured all providers (OpenAI, Anthropic, Bedrock, Ollama) have consistent date parsing logic
+- **Enhanced JSON templates**: Updated response templates to include all required fields for trend analysis and forecasting
+- **Improved fallback parser**: Robust pattern matching for date parsing when LLM providers are unavailable
+
+### GitHub Actions Integration
+- **Automated CI/CD**: GitHub Actions setup for continuous integration and deployment
+- **Automated testing**: Test suite execution on pull requests and commits
+- **Code quality checks**: Automated linting, formatting, and type checking
+
 ## Documentation
 
 The project includes comprehensive documentation:
@@ -258,3 +276,17 @@ The project includes comprehensive documentation:
 - **USER_GUIDE.md**: End-user documentation for all features
 - **CONTRIBUTING.md**: Development and contribution guidelines
 - **SECURITY.md**: Security practices and vulnerability reporting
+
+## Quality Assurance
+
+### Testing Strategy
+- **Unit tests**: Comprehensive test coverage for all core components
+- **Integration tests**: End-to-end testing of query processing pipeline
+- **Performance tests**: Load testing for large dataset queries
+- **Error handling tests**: Validation of error scenarios and edge cases
+
+### Code Quality
+- **Type safety**: Full mypy type checking with strict mode
+- **Code formatting**: Black formatter for consistent code style  
+- **Linting**: Flake8 for code quality and style enforcement
+- **Documentation**: Comprehensive docstrings and inline comments
