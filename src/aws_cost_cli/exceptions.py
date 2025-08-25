@@ -21,6 +21,20 @@ class AWSCostCLIError(Exception):
         self.suggestions = suggestions or []
 
 
+class ValidationError(AWSCostCLIError):
+    """Exception raised when query validation fails."""
+    
+    def __init__(self, message: str, validation_errors: Optional[List[str]] = None):
+        suggestions = [
+            "Check your query syntax and parameters",
+            "Ensure date ranges are valid and not too large", 
+            "Verify service names are correct",
+            "Use supported metric types and dimensions"
+        ]
+        super().__init__(message, "VALIDATION_ERROR", suggestions)
+        self.validation_errors = validation_errors or []
+
+
 class AWSCredentialsError(AWSCostCLIError):
     """Exception raised when AWS credentials are invalid or missing."""
     

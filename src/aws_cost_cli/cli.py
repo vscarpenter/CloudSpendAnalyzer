@@ -34,6 +34,7 @@ from .exceptions import (
     ValidationError,
     format_error_message
 )
+from .health import HealthChecker, create_health_check_server
 
 
 # Global console for rich output
@@ -1911,6 +1912,234 @@ def test(ctx, debug: bool):
         console.print(f"   ❌ Cache error: {e}")
     
     console.print("\n🎉 System test completed!")
+
+
+@cli.group()
+def health():
+    """Health check and monitoring commands."""
+    pass
+
+
+@health.command("check")
+@click.option(
+    '--detailed', '-d',
+    is_flag=True,
+    help='Include detailed system metrics in health check'
+)
+@click.option(
+    '--json', 'output_json',
+    is_flag=True,
+    help='Output results in JSON format'
+)
+@click.option(
+    '--config-file', '-c',
+    type=click.Path(exists=True),
+    help='Configuration file path'
+)
+def health_check(detailed: bool, output_json: bool, config_file: Optional[str]):
+    """Perform comprehensive health check of the system."""
+    try:
+        # Load configuration if provided
+        config = None
+        if config_file:
+            config_manager = ConfigManager()
+            config = config_manager.load_config(config_file)
+        
+        health_checker = HealthChecker(config)
+        health_status = health_checker.check_health(detailed=detailed)
+        
+        if output_json:
+            # JSON output for programmatic use
+            import json
+            from dataclasses import asdict
+            
+            result = asdict(health_status)
+            result["timestamp"] = result["timestamp"].isoformat()
+            print(json.dumps(result, indent=2))
+        else:
+            # Rich formatted output for humans
+            _display_health_status(health_status)
+            
+        # Exit with appropriate code
+        if health_status.status == "unhealthy":
+            sys.exit(1)
+        elif health_status.status == "degraded":
+            sys.exit(2)
+        else:
+            sys.exit(0)
+            
+    except Exception as e:
+        console.print(Panel(
+            Text(f"❌ Health check failed: {str(e)}", style="bold red"),
+            title="Health Check Error",
+            border_style="red"
+        ))
+        sys.exit(1)
+
+
+@health.command("ready")
+@click.option(
+    '--json', 'output_json',
+    is_flag=True,
+    help='Output results in JSON format'
+)
+def readiness_check(output_json: bool):
+    """Check if the application is ready to serve requests."""
+    try:
+        health_checker = HealthChecker()
+        readiness = health_checker.check_readiness()
+        
+        if output_json:
+            import json
+            print(json.dumps(readiness, indent=2))
+        else:
+            if readiness["ready"]:
+                console.print("✅ Application is ready", style="bold green")
+            else:
+                console.print("❌ Application is not ready", style="bold red")
+                
+            # Show check details
+            for check_name, check_result in readiness["checks"].items():
+                status_emoji = "✅" if check_result["status"] == "ready" else "❌"
+                console.print(f"  {status_emoji} {check_name}: {check_result['message']}")
+        
+        # Exit with appropriate code
+        sys.exit(0 if readiness["ready"] else 1)
+        
+    except Exception as e:
+        console.print(Panel(
+            Text(f"❌ Readiness check failed: {str(e)}", style="bold red"),
+            title="Readiness Check Error",
+            border_style="red"
+        ))
+        sys.exit(1)
+
+
+@health.command("serve")
+@click.option(
+    '--host',
+    default='0.0.0.0',
+    help='Host to bind the health check server (default: 0.0.0.0)'
+)
+@click.option(
+    '--port', '-p',
+    default=8081,
+    type=int,
+    help='Port to bind the health check server (default: 8081)'
+)
+@click.option(
+    '--config-file', '-c',
+    type=click.Path(exists=True),
+    help='Configuration file path'
+)
+def serve_health_checks(host: str, port: int, config_file: Optional[str]):
+    """Start HTTP server for health check endpoints.
+    
+    Endpoints:
+    - GET /health - Basic health check
+    - GET /health/detailed - Detailed health check with metrics
+    - GET /ready - Readiness check
+    - GET /metrics - Prometheus metrics
+    """
+    try:
+        # Load configuration if provided
+        config = None
+        if config_file:
+            config_manager = ConfigManager()
+            config = config_manager.load_config(config_file)
+        
+        console.print(f"🚀 Starting health check server on {host}:{port}")
+        console.print("Available endpoints:")
+        console.print(f"  • http://{host}:{port}/health")
+        console.print(f"  • http://{host}:{port}/health/detailed") 
+        console.print(f"  • http://{host}:{port}/ready")
+        console.print(f"  • http://{host}:{port}/metrics")
+        console.print("\nPress Ctrl+C to stop the server")
+        
+        server = create_health_check_server(host, port, config)
+        server.serve_forever()
+        
+    except KeyboardInterrupt:
+        console.print("\n👋 Health check server stopped")
+    except Exception as e:
+        console.print(Panel(
+            Text(f"❌ Failed to start health check server: {str(e)}", style="bold red"),
+            title="Server Error",
+            border_style="red"
+        ))
+        sys.exit(1)
+
+
+def _display_health_status(health_status):
+    """Display health status in a user-friendly format."""
+    from rich.table import Table
+    from rich.console import Console
+    
+    # Overall status
+    status_color = {
+        "healthy": "green",
+        "degraded": "yellow", 
+        "unhealthy": "red"
+    }
+    
+    status_emoji = {
+        "healthy": "✅",
+        "degraded": "⚠️",
+        "unhealthy": "❌"
+    }
+    
+    console.print(Panel(
+        Text(
+            f"{status_emoji[health_status.status]} System Status: {health_status.status.upper()}",
+            style=f"bold {status_color[health_status.status]}"
+        ),
+        title="Health Check Results",
+        border_style=status_color[health_status.status]
+    ))
+    
+    # Create table for check results
+    table = Table(show_header=True, header_style="bold blue")
+    table.add_column("Component", style="cyan", width=15)
+    table.add_column("Status", width=10)
+    table.add_column("Details", style="dim")
+    
+    for component, check_result in health_status.checks.items():
+        if not isinstance(check_result, dict):
+            continue
+            
+        check_status = check_result.get("status", "unknown")
+        check_emoji = status_emoji.get(check_status, "❓")
+        
+        # Format details
+        details = []
+        if "error" in check_result:
+            details.append(f"Error: {check_result['error']}")
+        if "warnings" in check_result and check_result["warnings"]:
+            details.append(f"Warnings: {', '.join(check_result['warnings'])}")
+        if "response_time_ms" in check_result:
+            details.append(f"Response: {check_result['response_time_ms']}ms")
+        if "size_mb" in check_result:
+            details.append(f"Size: {check_result['size_mb']}MB")
+            
+        details_text = "; ".join(details) if details else "OK"
+        
+        table.add_row(
+            component.title(),
+            f"{check_emoji} {check_status}",
+            details_text
+        )
+    
+    console.print(table)
+    
+    # Show summary
+    summary = health_status.summary
+    console.print(f"\n📊 Summary: {summary['healthy_checks']}/{summary['total_checks']} checks healthy")
+    if summary['degraded_checks'] > 0:
+        console.print(f"⚠️  {summary['degraded_checks']} checks degraded")
+    if summary['unhealthy_checks'] > 0:
+        console.print(f"❌ {summary['unhealthy_checks']} checks unhealthy")
+    
+    console.print(f"⏱️  Uptime: {summary['uptime_seconds']:.1f} seconds")
 
 
 def main():

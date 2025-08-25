@@ -12,6 +12,7 @@ from botocore.exceptions import (
     ConnectTimeoutError,
     ReadTimeoutError
 )
+from botocore.config import Config
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 
@@ -102,9 +103,27 @@ class AWSCostClient:
         self.profile = profile
         self.region = region
         self.session = boto3.Session(profile_name=profile) if profile else boto3.Session()
-        self.client = self.session.client('ce', region_name=region)
+        self.client = self._create_optimized_client(region)
         self.credential_manager = CredentialManager()
         self.cache_manager = cache_manager
+    
+    def _create_optimized_client(self, region: str):
+        """Create boto3 client with optimized configuration for production."""
+        config = Config(
+            # Connection pooling and retry configuration
+            retries={
+                'max_attempts': 3,
+                'mode': 'adaptive'
+            },
+            # Connection pooling - reuse connections for better performance
+            max_pool_connections=50,
+            # Timeout configuration
+            connect_timeout=60,
+            read_timeout=60,
+            # Enable TCP keepalive for long-running connections
+            tcp_keepalive=True,
+        )
+        return self.session.client('ce', region_name=region, config=config)
     
     def validate_permissions(self) -> bool:
         """Validate that the current credentials have necessary permissions."""

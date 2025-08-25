@@ -1,0 +1,31 @@
+# Production-only dependencies for AWS Cost Explorer CLI
+# These dependencies are optimized for production deployment
+
+# High-performance ASGI server
+uvicorn[standard]>=0.18.0
+
+# Production WSGI server (for future web interface)
+gunicorn>=20.1.0
+
+# Enhanced logging and monitoring
+structlog>=22.0.0
+python-json-logger>=2.0.0
+
+# Performance monitoring
+psutil>=5.9.0
+
+# Production-grade configuration management
+python-decouple>=3.6
+
+# SSL/TLS support for secure connections
+cryptography>=3.4.8
+
+# Database drivers for production (optional)
+psycopg2-binary>=2.9.0  # PostgreSQL support
+redis>=4.3.0            # Redis caching support
+
+# Process management
+supervisor>=4.2.0
+
+# Health checks and monitoring
+healthcheck>=1.3.3

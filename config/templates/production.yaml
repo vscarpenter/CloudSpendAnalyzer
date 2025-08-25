@@ -1,0 +1,210 @@
+# Production Environment Configuration
+# Optimized for reliability, performance, and monitoring
+
+# LLM Provider - Production grade with fallback
+llm_provider: "anthropic"
+llm_config:
+  model: "claude-3-sonnet-20240229"
+  max_tokens: 4000
+  temperature: 0.1
+  timeout: 45
+  
+# Fallback LLM configuration
+llm_fallback:
+  provider: "openai"
+  model: "gpt-4"
+  max_tokens: 4000
+  temperature: 0.1
+
+# AWS Configuration
+default_profile: "production"
+region: "us-east-1"
+
+# Production Caching - High performance
+cache_ttl: 900  # 15 minutes for fresh production data
+cache_dir: "/var/lib/aws-cost-cli/cache"
+enable_compression: true
+cache_max_size_gb: 5
+cache_cleanup_interval: 3600  # Clean up every hour
+
+# Database Configuration for Production
+database:
+  enabled: true
+  type: "postgresql"
+  host: "prod-cost-db.internal.company.com"
+  port: 5432
+  database: "aws_costs_prod"
+  username: "cost_service"
+  ssl_mode: "require"
+  connection_pool_size: 25
+  connection_timeout: 30
+  statement_timeout: 300
+
+# High-Performance Configuration
+performance:
+  parallel_requests: true
+  max_concurrent_requests: 10
+  connection_pool_size: 100
+  request_timeout: 90
+  retry_attempts: 3
+  retry_backoff_factor: 2.0
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 5
+    recovery_timeout: 60
+  
+# Query Optimization
+query_optimization:
+  enable_result_caching: true
+  enable_query_rewriting: true
+  max_result_size_mb: 100
+  query_timeout_seconds: 300
+
+# Production Query Defaults
+query_defaults:
+  granularity: "DAILY"
+  include_credits: true
+  include_refunds: true
+  include_upfront: true
+  max_date_range_days: 90
+
+# Cost Optimization - Production Focus
+optimization:
+  enable_recommendations: true
+  check_reserved_instances: true
+  check_savings_plans: true
+  anomaly_detection: true
+  budget_threshold_percent: 8
+  enable_cost_alerts: true
+  alert_frequency: "daily"
+
+# Production Monitoring and Observability
+monitoring:
+  enable_performance_tracking: true
+  enable_audit_logging: true
+  log_level: "WARN"  # Reduce log noise in production
+  structured_logging: true
+  log_format: "json"
+  metrics_enabled: true
+  metrics_port: 8080
+  health_check_port: 8081
+  
+  # Metrics to track
+  metrics:
+    - "query_duration"
+    - "cache_hit_rate" 
+    - "api_request_count"
+    - "error_rate"
+    - "concurrent_queries"
+    - "memory_usage"
+    - "cpu_usage"
+
+# Production Security Settings
+security:
+  validate_queries: true
+  max_query_length: 1000
+  sql_injection_protection: true
+  audit_all_queries: true
+  query_rate_limiting:
+    enabled: true
+    max_queries_per_minute: 100
+    max_queries_per_hour: 2000
+  
+  # IP whitelisting (if needed)
+  allowed_ips: []  # Empty means all IPs allowed
+  
+  # Authentication (for API mode)
+  require_authentication: false
+  api_key_header: "X-API-Key"
+
+# Production Output Configuration
+output_format: "simple"  # Faster for automated processing
+default_currency: "USD"
+suppress_warnings: false  # Keep warnings for production monitoring
+
+# Export Configuration for Production
+export:
+  default_formats: ["json"]  # Machine-readable format
+  include_metadata: true
+  timestamp_files: true
+  output_directory: "/var/lib/aws-cost-cli/exports"
+  file_permissions: "640"  # Restricted permissions
+  max_file_size_mb: 50
+
+# Production Alerting Configuration
+alerting:
+  enabled: true
+  channels:
+    email:
+      enabled: true
+      smtp_server: "smtp.company.com"
+      smtp_port: 587
+      sender: "aws-costs-prod@company.com"
+      recipients:
+        - "oncall-finops@company.com"
+        - "prod-alerts@company.com"
+    
+    slack:
+      enabled: false  # Configure if using Slack
+      webhook_url: ""
+      channel: "#production-alerts"
+      
+    pagerduty:
+      enabled: false  # Configure for critical alerts
+      integration_key: ""
+
+# Health Checks Configuration
+health_checks:
+  enabled: true
+  port: 8081
+  endpoints:
+    - "/health"          # Basic health check
+    - "/health/detailed" # Detailed health with dependencies
+    - "/metrics"         # Prometheus metrics
+    - "/ready"          # Readiness probe
+  
+  checks:
+    database_connection: true
+    aws_api_connectivity: true
+    cache_accessibility: true
+    disk_space: true
+    memory_usage: true
+
+# Resource Limits
+limits:
+  max_memory_mb: 2048
+  max_cpu_percent: 80
+  max_concurrent_queries: 20
+  max_result_size_mb: 100
+  query_timeout_seconds: 300
+
+# Backup and Recovery
+backup:
+  enabled: true
+  cache_backup: true
+  database_backup: true
+  backup_retention_days: 30
+  backup_schedule: "0 2 * * *"  # Daily at 2 AM
+
+# Error Handling
+error_handling:
+  retry_on_throttling: true
+  max_throttle_retries: 5
+  throttle_retry_delay: 30
+  circuit_breaker_enabled: true
+  graceful_degradation: true
+  
+# Logging Configuration  
+logging:
+  level: "WARN"
+  format: "json"
+  output: "/var/log/aws-cost-cli/application.log"
+  max_size_mb: 100
+  max_files: 10
+  rotate_daily: true
+  
+  # Log what in production
+  log_queries: false      # Don't log full queries (may contain sensitive data)
+  log_responses: false    # Don't log full responses (large data)
+  log_performance: true   # Do log performance metrics
+  log_errors: true       # Always log errors

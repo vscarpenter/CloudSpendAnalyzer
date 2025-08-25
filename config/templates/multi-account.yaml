@@ -1,0 +1,99 @@
+# Multi-Account AWS Cost Explorer Configuration
+# This template is designed for organizations managing multiple AWS accounts
+
+# LLM Provider Configuration
+llm_provider: "anthropic"  # or "openai", "bedrock", "ollama"
+llm_config:
+  model: "claude-3-sonnet-20240229"  # High-quality model for complex queries
+  max_tokens: 4000
+  temperature: 0.1  # Low temperature for consistent results
+  timeout: 30
+
+# Default AWS Profile (can be overridden per query)
+default_profile: "org-management"  # Main organization management account
+
+# Multi-Account Configuration
+accounts:
+  - name: "Production"
+    profile: "prod-account"
+    account_id: "123456789012"
+    role_arn: "arn:aws:iam::123456789012:role/CostExplorerRole"
+    description: "Production workloads"
+    
+  - name: "Development" 
+    profile: "dev-account"
+    account_id: "123456789013"
+    role_arn: "arn:aws:iam::123456789013:role/CostExplorerRole"
+    description: "Development and testing"
+    
+  - name: "Security"
+    profile: "security-account"
+    account_id: "123456789014"
+    role_arn: "arn:aws:iam::123456789014:role/CostExplorerRole" 
+    description: "Security and compliance tools"
+
+# Caching Configuration (important for multi-account queries)
+cache_ttl: 1800  # 30 minutes (shorter for fresher data across accounts)
+cache_dir: "~/.aws-cost-cli/cache/multi-account"
+enable_compression: true
+
+# Output Configuration
+output_format: "detailed"  # Show comprehensive information
+default_currency: "USD"
+show_account_breakdown: true
+
+# Performance Optimization for Multiple Accounts
+performance:
+  parallel_account_queries: true
+  max_concurrent_requests: 3  # Conservative to avoid API throttling
+  connection_pool_size: 50
+  request_timeout: 60
+  retry_attempts: 3
+
+# Query Defaults for Multi-Account Environment
+query_defaults:
+  granularity: "MONTHLY"  # Default to monthly for better performance
+  include_credits: true
+  include_refunds: true
+  include_upfront: true
+  group_by_account: true  # Always show account breakdown
+
+# Cost Optimization Settings
+optimization:
+  enable_recommendations: true
+  check_reserved_instances: true
+  check_savings_plans: true
+  anomaly_detection: true
+  budget_threshold_percent: 10  # Alert when 10% over budget
+
+# Monitoring and Alerting
+monitoring:
+  enable_performance_tracking: true
+  log_level: "INFO"
+  metrics_retention_days: 30
+  alert_on_high_costs: true
+  cost_spike_threshold_percent: 25
+
+# Security Settings
+security:
+  validate_queries: true
+  max_query_length: 1000
+  allowed_dimensions: ["SERVICE", "REGION", "AZ", "INSTANCE_TYPE", "LINKED_ACCOUNT"]
+  blocked_patterns: []
+
+# Export Settings for Enterprise Reporting
+export:
+  default_formats: ["csv", "excel"]
+  include_metadata: true
+  timestamp_files: true
+  auto_organize_by_date: true
+  
+# Email Configuration for Automated Reports
+email:
+  enabled: false
+  smtp_server: "smtp.company.com"
+  smtp_port: 587
+  sender: "aws-costs@company.com"
+  recipients:
+    - "finance-team@company.com"
+    - "cloud-ops@company.com"

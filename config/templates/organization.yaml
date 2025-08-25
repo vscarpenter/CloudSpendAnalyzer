@@ -1,0 +1,173 @@
+# AWS Organizations Enterprise Configuration
+# Optimized for large organizations with consolidated billing
+
+# LLM Provider Configuration - Enterprise grade
+llm_provider: "bedrock"  # AWS native for enterprise
+llm_config:
+  region: "us-east-1"
+  model_id: "anthropic.claude-3-sonnet-20240229-v1:0"
+  max_tokens: 4000
+  temperature: 0.05  # Very consistent for enterprise reporting
+  
+# Primary organization management account
+default_profile: "organization-master"
+
+# Organization Structure Mapping
+organization:
+  master_account_id: "123456789000"
+  organization_units:
+    - name: "Production"
+      ou_id: "ou-root-1234prod"
+      accounts: ["123456789012", "123456789013", "123456789014"]
+      
+    - name: "Development"
+      ou_id: "ou-root-1234dev" 
+      accounts: ["123456789015", "123456789016"]
+      
+    - name: "Sandbox"
+      ou_id: "ou-root-1234sand"
+      accounts: ["123456789017", "123456789018", "123456789019"]
+      
+    - name: "Security"
+      ou_id: "ou-root-1234sec"
+      accounts: ["123456789020"]
+
+# Enterprise Caching Strategy
+cache_ttl: 3600  # 1 hour for stable enterprise data
+cache_dir: "~/.aws-cost-cli/cache/enterprise"
+enable_compression: true
+cache_encryption: true  # Encrypt cache files
+
+# Database Configuration for Enterprise Scale
+database:
+  enabled: true
+  type: "postgresql"  # Enterprise-grade database
+  host: "cost-analytics-db.company.com"
+  port: 5432
+  database: "aws_cost_analytics"
+  username: "cost_analyzer"
+  # Password should be set via environment variable: AWS_COST_CLI_DB_PASSWORD
+  ssl_mode: "require"
+  connection_pool_size: 20
+
+# Advanced Output Configuration
+output_format: "detailed"
+default_currency: "USD"
+show_organizational_hierarchy: true
+include_cost_allocation_tags: true
+
+# Enterprise Performance Settings
+performance:
+  parallel_ou_queries: true
+  max_concurrent_requests: 5
+  connection_pool_size: 100
+  request_timeout: 120  # Longer timeout for complex org queries
+  retry_attempts: 4
+  enable_query_optimization: true
+
+# Comprehensive Query Defaults
+query_defaults:
+  granularity: "MONTHLY"
+  include_credits: true
+  include_refunds: true 
+  include_upfront: true
+  include_discounts: true
+  group_by_organization_unit: true
+  show_cost_allocation: true
+
+# Advanced Cost Optimization
+optimization:
+  enable_recommendations: true
+  check_reserved_instances: true
+  check_savings_plans: true
+  check_spot_instances: true
+  anomaly_detection: true
+  budget_threshold_percent: 5  # Stricter for enterprise
+  cost_center_analysis: true
+  rightsizing_recommendations: true
+
+# Comprehensive Monitoring
+monitoring:
+  enable_performance_tracking: true
+  enable_audit_logging: true
+  log_level: "INFO"
+  metrics_retention_days: 90
+  performance_baseline_tracking: true
+  sla_monitoring: true
+  
+# Enterprise Security Configuration
+security:
+  validate_queries: true
+  max_query_length: 2000
+  sql_injection_protection: true
+  audit_all_queries: true
+  allowed_dimensions: [
+    "SERVICE", "REGION", "AZ", "INSTANCE_TYPE", "LINKED_ACCOUNT",
+    "PURCHASE_TYPE", "TENANCY", "PLATFORM", "OPERATION", "USAGE_TYPE"
+  ]
+  blocked_patterns: ["drop", "delete", "exec", "--", "/*"]
+  rate_limiting:
+    enabled: true
+    max_requests_per_minute: 60
+    max_requests_per_hour: 1000
+
+# Enterprise Export Configuration  
+export:
+  default_formats: ["csv", "excel", "json"]
+  include_metadata: true
+  include_cost_breakdown: true
+  include_recommendations: true
+  timestamp_files: true
+  auto_organize_by_date: true
+  retention_days: 365
+  
+# Advanced Email Configuration
+email:
+  enabled: true
+  smtp_server: "smtp.enterprise.com"
+  smtp_port: 587
+  use_tls: true
+  sender: "aws-cost-analytics@enterprise.com"
+  
+  # Distribution lists for different report types
+  recipients:
+    daily_reports:
+      - "cloud-ops@enterprise.com"
+      - "finops@enterprise.com"
+    weekly_reports:
+      - "cloud-ops@enterprise.com"
+      - "finops@enterprise.com" 
+      - "engineering-leads@enterprise.com"
+    monthly_reports:
+      - "finops@enterprise.com"
+      - "cfo@enterprise.com"
+      - "cto@enterprise.com"
+    anomaly_alerts:
+      - "cloud-ops@enterprise.com"
+      - "incident-response@enterprise.com"
+
+# Compliance and Governance
+compliance:
+  data_retention_policy: "2_years"
+  enable_data_classification: true
+  pii_scrubbing: true
+  audit_trail_retention: "7_years"
+  
+# Integration Settings
+integrations:
+  slack:
+    enabled: false
+    webhook_url: "https://hooks.slack.com/services/..."
+    channels:
+      - "#cloud-costs"
+      - "#finops-alerts"
+  
+  jira:
+    enabled: false
+    server: "https://company.atlassian.net"
+    project_key: "FINOPS"
+    
+  datadog:
+    enabled: false
+    api_key: "..." # Set via environment variable
+    tags: ["env:production", "team:finops"]

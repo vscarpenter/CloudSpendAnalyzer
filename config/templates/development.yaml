@@ -1,0 +1,145 @@
+# Development Environment Configuration
+# Optimized for development workflow and debugging
+
+# LLM Provider - Cost-effective for development
+llm_provider: "openai"
+llm_config:
+  model: "gpt-3.5-turbo"  # Cheaper model for development
+  max_tokens: 2000
+  temperature: 0.2
+  timeout: 30
+
+# AWS Configuration
+default_profile: "dev"
+region: "us-west-2"  # Different region for dev isolation
+
+# Development Caching - Longer TTL for cost savings
+cache_ttl: 7200  # 2 hours - longer cache for development
+cache_dir: "~/.aws-cost-cli/cache/dev"
+enable_compression: false  # Disable for faster debugging
+cache_max_size_gb: 1
+
+# Simple file-based storage for development
+database:
+  enabled: false  # Use file-based cache only
+
+# Development Performance Settings
+performance:
+  parallel_requests: false  # Simpler debugging
+  max_concurrent_requests: 2
+  connection_pool_size: 10
+  request_timeout: 60
+  retry_attempts: 2
+  
+# Relaxed Query Defaults
+query_defaults:
+  granularity: "MONTHLY"  # Faster queries
+  include_credits: true
+  include_refunds: true
+  max_date_range_days: 365  # Allow larger ranges for testing
+
+# Basic Cost Optimization
+optimization:
+  enable_recommendations: true
+  check_reserved_instances: false  # Not relevant for dev
+  check_savings_plans: false       # Not relevant for dev
+  anomaly_detection: false         # Disabled for dev
+  budget_threshold_percent: 20     # More relaxed
+
+# Verbose Development Monitoring
+monitoring:
+  enable_performance_tracking: true
+  enable_audit_logging: false      # Less noise in development
+  log_level: "DEBUG"              # Verbose logging for development
+  structured_logging: false       # Human-readable logs
+  log_format: "text"
+  metrics_enabled: false          # Simpler setup
+
+# Relaxed Security for Development
+security:
+  validate_queries: true
+  max_query_length: 2000         # Allow longer queries for testing
+  sql_injection_protection: true
+  audit_all_queries: false       # Don't audit in dev
+  query_rate_limiting:
+    enabled: false               # No rate limiting in dev
+
+# Development Output Configuration
+output_format: "detailed"        # Show all details for debugging
+default_currency: "USD"
+suppress_warnings: false         # Show all warnings for learning
+show_debug_info: true           # Extra debug information
+
+# Development Export Configuration
+export:
+  default_formats: ["json", "csv"]  # Multiple formats for testing
+  include_metadata: true
+  timestamp_files: false           # Simpler filenames
+  output_directory: "./exports"    # Local directory
+  file_permissions: "644"          # Standard permissions
+
+# Simple Alerting for Development
+alerting:
+  enabled: false  # Usually disabled in development
+  
+# Development Health Checks
+health_checks:
+  enabled: true
+  port: 8081
+  endpoints:
+    - "/health"
+    - "/debug"  # Additional debug endpoint
+  
+  checks:
+    aws_api_connectivity: true
+    cache_accessibility: true
+    disk_space: false  # Not critical for dev
+    memory_usage: false
+
+# Generous Resource Limits for Development
+limits:
+  max_memory_mb: 1024
+  max_cpu_percent: 90
+  max_concurrent_queries: 5
+  max_result_size_mb: 200  # Allow larger results for testing
+  query_timeout_seconds: 600  # Longer timeout for complex test queries
+
+# No backup needed in development
+backup:
+  enabled: false
+
+# Permissive Error Handling
+error_handling:
+  retry_on_throttling: true
+  max_throttle_retries: 3
+  throttle_retry_delay: 5      # Shorter delay
+  circuit_breaker_enabled: false  # Disabled for easier debugging
+  graceful_degradation: false     # Fail fast for debugging
+  
+# Verbose Logging for Development
+logging:
+  level: "DEBUG"
+  format: "text"                # Human-readable
+  output: "./logs/dev.log"      # Local file
+  max_size_mb: 50
+  max_files: 3
+  rotate_daily: false
+  
+  # Log everything in development
+  log_queries: true             # Help with debugging
+  log_responses: true           # Help with debugging  
+  log_performance: true
+  log_errors: true
+
+# Development-specific Features
+development:
+  enable_query_explain: true    # Show query execution plans
+  enable_mock_mode: false       # Use real AWS APIs
+  cache_debug_info: true        # Store debug information in cache
+  show_internal_metrics: true   # Show internal performance metrics
+  
+# Test Data Configuration
+test_data:
+  enable_sample_queries: true   # Include sample queries for testing
+  generate_test_reports: true   # Generate sample reports
+  mock_expensive_calls: false   # Still use real AWS APIs

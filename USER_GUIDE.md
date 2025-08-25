@@ -5,13 +5,16 @@ This comprehensive guide will help you master the AWS Cost Explorer CLI tool and
 ## Table of Contents
 
 1. [Getting Started](#getting-started)
-2. [Basic Query Patterns](#basic-query-patterns)
-3. [Service-Specific Examples](#service-specific-examples)
-4. [Time-Based Analysis](#time-based-analysis)
-5. [Advanced Query Techniques](#advanced-query-techniques)
-6. [Configuration and Optimization](#configuration-and-optimization)
-7. [Troubleshooting](#troubleshooting)
-8. [Best Practices](#best-practices)
+2. [Installation and Setup](#installation-and-setup)
+3. [Health Monitoring and System Status](#health-monitoring-and-system-status)
+4. [Basic Query Patterns](#basic-query-patterns)
+5. [Service-Specific Examples](#service-specific-examples)
+6. [Time-Based Analysis](#time-based-analysis)
+7. [Advanced Query Techniques](#advanced-query-techniques)
+8. [Configuration and Optimization](#configuration-and-optimization)
+9. [Enterprise Deployment](#enterprise-deployment)
+10. [Troubleshooting](#troubleshooting)
+11. [Best Practices](#best-practices)
 
 ## Getting Started
 
@@ -36,6 +39,175 @@ This basic query will:
 - Test your AWS credentials
 - Verify your LLM provider configuration
 - Show your overall AWS spending for the previous month
+
+## Installation and Setup
+
+### Standard Installation
+
+For basic usage and development:
+
+```bash
+# Install the package with core dependencies
+pip install -e .
+
+# Or install with development tools
+pip install -e .[dev]
+```
+
+### Production Installation
+
+For production deployments, use the production-optimized dependencies:
+
+```bash
+# Install production dependencies for better performance
+pip install -r requirements-prod.txt
+
+# Then install the main package
+pip install -e .
+```
+
+**Production dependencies include:**
+- High-performance ASGI/WSGI servers (uvicorn, gunicorn)
+- Enhanced logging and monitoring tools
+- Database drivers (PostgreSQL, Redis)
+- Security and SSL/TLS support
+- Process management tools
+
+### Development vs Production Dependencies
+
+| Dependency Type | Development | Production |
+|----------------|-------------|------------|
+| **Core Features** | ✅ Basic functionality | ✅ All features + optimizations |
+| **Performance** | Standard | High-performance servers & pooling |
+| **Monitoring** | Basic logging | Structured logging + metrics |
+| **Database** | File-based cache | PostgreSQL + Redis support |
+| **Security** | Standard | Enhanced SSL/TLS + encryption |
+| **Deployment** | Local development | Production-ready servers |
+
+## Health Monitoring and System Status
+
+The CLI includes comprehensive health monitoring capabilities for production deployments and troubleshooting.
+
+### Basic Health Checks
+
+Check the overall system health:
+
+```bash
+# Quick health check
+aws-cost-cli health check
+
+# Detailed health check with system metrics
+aws-cost-cli health check --detailed
+
+# JSON output for monitoring systems
+aws-cost-cli health check --json
+```
+
+**Example output:**
+```
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ ✅ System Status: HEALTHY                                                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Component     ┃ Status     ┃ Details                                                          ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ System        │ ✅ healthy │ OK                                                               │
+│ Aws           │ ✅ healthy │ Response: 245ms                                                  │
+│ Cache         │ ✅ healthy │ Size: 15.2MB; Response: 2ms                                     │
+│ Llm           │ ✅ healthy │ OK                                                               │
+└───────────────┴────────────┴──────────────────────────────────────────────────────────────┘
+
+📊 Summary: 4/4 checks healthy
+⏱️  Uptime: 45.2 seconds
+```
+
+### Readiness Checks
+
+For container orchestration and load balancers:
+
+```bash
+# Check if application is ready to serve requests
+aws-cost-cli health ready
+
+# JSON output for Kubernetes probes
+aws-cost-cli health ready --json
+```
+
+### Health Check Server
+
+Start an HTTP server for monitoring endpoints (ideal for containers):
+
+```bash
+# Start health check server
+aws-cost-cli health serve --port 8081
+
+# Bind to specific host
+aws-cost-cli health serve --host 0.0.0.0 --port 8081
+```
+
+**Available endpoints:**
+- `GET /health` - Basic health check
+- `GET /health/detailed` - Detailed health with metrics
+- `GET /ready` - Readiness probe
+- `GET /metrics` - Prometheus metrics
+
+### Monitoring Integration
+
+#### Docker/Kubernetes Health Checks
+
+```yaml
+# Kubernetes deployment example
+spec:
+  containers:
+  - name: aws-cost-cli
+    image: your-registry/aws-cost-cli:latest
+    ports:
+    - containerPort: 8081
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8081
+      initialDelaySeconds: 30
+      periodSeconds: 10
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 8081
+      initialDelaySeconds: 5
+      periodSeconds: 5
+```
+
+#### Prometheus Monitoring
+
+```yaml
+# Prometheus scrape config
+scrape_configs:
+  - job_name: 'aws-cost-cli'
+    static_configs:
+      - targets: ['your-service:8081']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+```
+
+### Health Check Components
+
+The health monitoring system checks:
+
+| Component | Description | Healthy State |
+|-----------|-------------|---------------|
+| **System** | CPU, memory, disk usage | < 80% utilization |
+| **AWS** | API connectivity and permissions | < 1s response time |
+| **Cache** | File system access and performance | Read/write operations work |
+| **LLM** | Provider API key availability | API keys configured |
+| **Database** | Connection and query performance | < 100ms queries |
+
+### Status Codes
+
+Health check commands return appropriate exit codes:
+- `0` - Healthy
+- `1` - Unhealthy (critical issues)
+- `2` - Degraded (warnings, but functional)
 
 ## Basic Query Patterns
 
@@ -392,6 +564,296 @@ aws-cost-cli query "Project my annual AWS costs based on the last 6 months"
 aws-cost-cli query "Which services are likely to drive cost growth next quarter?"
 ```
 
+## Enterprise Deployment
+
+The AWS Cost CLI provides enterprise-grade configuration templates and deployment options for large organizations.
+
+### Configuration Templates
+
+Pre-configured templates are available for common enterprise scenarios:
+
+```bash
+# List available templates
+ls config/templates/
+
+# Available templates:
+# - development.yaml    - Development environment
+# - production.yaml     - Production deployment  
+# - multi-account.yaml  - Multi-account setup
+# - organization.yaml   - AWS Organizations
+```
+
+### Development Environment Setup
+
+For development and testing:
+
+```bash
+# Copy development template
+cp config/templates/development.yaml ~/.aws-cost-cli/config.yaml
+
+# Edit for your environment
+nano ~/.aws-cost-cli/config.yaml
+```
+
+**Development template features:**
+- Cost-effective LLM provider settings (GPT-3.5-turbo)
+- Longer cache TTL (2 hours) to reduce API calls
+- Verbose debug logging
+- Relaxed security settings
+- Local file-based storage
+
+### Production Environment Setup
+
+For production deployments:
+
+```bash
+# Copy production template
+cp config/templates/production.yaml ~/.aws-cost-cli/config.yaml
+
+# Install production dependencies
+pip install -r requirements-prod.txt
+
+# Set required environment variables
+export AWS_COST_CLI_DB_PASSWORD="your-secure-password"
+export ANTHROPIC_API_KEY="your-anthropic-key"
+```
+
+**Production template features:**
+- High-performance connection pooling (100+ connections)
+- PostgreSQL database integration
+- Comprehensive health checks and monitoring
+- Circuit breaker patterns for resilience
+- Structured JSON logging
+- Resource limits and security controls
+
+### Multi-Account Enterprise Setup
+
+For organizations with multiple AWS accounts:
+
+```bash
+# Copy multi-account template
+cp config/templates/multi-account.yaml ~/.aws-cost-cli/config.yaml
+
+# Configure account-specific roles
+# Edit the accounts section in the config file
+```
+
+**Multi-account template example:**
+```yaml
+accounts:
+  - name: "Production"
+    profile: "prod-account"  
+    account_id: "123456789012"
+    role_arn: "arn:aws:iam::123456789012:role/CostExplorerRole"
+    
+  - name: "Development"
+    profile: "dev-account"
+    account_id: "123456789013" 
+    role_arn: "arn:aws:iam::123456789013:role/CostExplorerRole"
+
+performance:
+  parallel_account_queries: true
+  max_concurrent_requests: 3
+```
+
+### AWS Organizations Setup
+
+For large enterprises using AWS Organizations:
+
+```bash
+# Copy organization template
+cp config/templates/organization.yaml ~/.aws-cost-cli/config.yaml
+
+# Configure database (required for organization scale)
+export AWS_COST_CLI_DB_PASSWORD="your-db-password"
+```
+
+**Organization template features:**
+- AWS Organizations integration
+- Organizational Unit (OU) cost analysis  
+- Enterprise-grade PostgreSQL database
+- Advanced security and audit logging
+- Cost allocation tag support
+- Integration with enterprise tools (Slack, JIRA)
+
+### Template Comparison
+
+| Feature | Development | Production | Multi-Account | Organization |
+|---------|-------------|------------|---------------|--------------|
+| **Database** | File-based | PostgreSQL | File/Optional DB | PostgreSQL |
+| **Caching** | 2 hours | 15 minutes | 30 minutes | 1 hour |
+| **Security** | Relaxed | Strict | Strict | Enterprise |
+| **Monitoring** | Basic | Advanced | Advanced | Enterprise |
+| **Scale** | Single user | Team/Dept | Multiple accounts | Enterprise org |
+
+### Configuration Validation
+
+After setting up your configuration:
+
+```bash
+# Validate configuration syntax
+aws-cost-cli config validate
+
+# Test database connectivity (if enabled)
+aws-cost-cli config test-db
+
+# Test LLM provider connectivity  
+aws-cost-cli config test-llm
+
+# Comprehensive system test
+aws-cost-cli health check --detailed
+```
+
+### Security Best Practices
+
+#### Environment Variables
+
+Never commit sensitive information to version control:
+
+```bash
+# Database credentials
+export AWS_COST_CLI_DB_PASSWORD="secure-password"
+
+# LLM API keys
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# AWS credentials (if not using profiles)
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+```
+
+#### File Permissions
+
+Secure your configuration files:
+
+```bash
+# Set restrictive permissions
+chmod 600 ~/.aws-cost-cli/config.yaml
+
+# For production deployments
+chown app:app /etc/aws-cost-cli/config.yaml
+chmod 640 /etc/aws-cost-cli/config.yaml
+```
+
+#### Network Security
+
+For production environments:
+- Use VPC endpoints for AWS API calls
+- Configure firewall rules for database access
+- Use TLS/SSL for all external connections
+- Enable audit logging for compliance
+
+### Container Deployment
+
+#### Docker Example
+
+```dockerfile
+FROM python:3.11-slim
+
+# Install production dependencies
+COPY requirements-prod.txt .
+RUN pip install -r requirements-prod.txt
+
+# Install application
+COPY . /app
+WORKDIR /app
+RUN pip install -e .
+
+# Health check configuration
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s \
+  CMD aws-cost-cli health ready || exit 1
+
+# Expose health check port
+EXPOSE 8081
+
+# Start health check server
+CMD ["aws-cost-cli", "health", "serve", "--host", "0.0.0.0", "--port", "8081"]
+```
+
+#### Kubernetes Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aws-cost-cli
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aws-cost-cli
+  template:
+    metadata:
+      labels:
+        app: aws-cost-cli
+    spec:
+      containers:
+      - name: aws-cost-cli
+        image: your-registry/aws-cost-cli:latest
+        ports:
+        - containerPort: 8081
+        env:
+        - name: AWS_COST_CLI_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: aws-cost-cli-secrets
+              key: db-password
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-cost-cli-secrets  
+              key: anthropic-api-key
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+```
+
+### Monitoring and Alerting
+
+#### Prometheus Integration
+
+```yaml
+# ServiceMonitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: aws-cost-cli
+spec:
+  selector:
+    matchLabels:
+      app: aws-cost-cli
+  endpoints:
+  - port: health
+    path: /metrics
+    interval: 30s
+```
+
+#### Grafana Dashboard
+
+Key metrics to monitor:
+- Query response times
+- Cache hit ratios
+- AWS API call frequency
+- System resource usage
+- Error rates by component
+
 ## Configuration and Optimization
 
 ### Profile Management
@@ -434,9 +896,42 @@ aws-cost-cli test --provider openai
 
 ## Troubleshooting
 
+### System Diagnostics
+
+Start troubleshooting with comprehensive health checks:
+
+```bash
+# Run comprehensive system health check
+aws-cost-cli health check --detailed
+
+# Check if system is ready to serve requests  
+aws-cost-cli health ready
+
+# Get system status in JSON format for analysis
+aws-cost-cli health check --json
+```
+
 ### Common Issues and Solutions
 
-#### 1. Authentication Errors
+#### 1. System Health Issues
+
+```bash
+# Check overall system health first
+aws-cost-cli health check
+
+# Identify specific component failures
+aws-cost-cli health check --detailed --json | jq '.checks'
+
+# Monitor system resources
+aws-cost-cli health check --detailed | grep -E "(cpu|memory|disk)"
+```
+
+**Common system issues:**
+- **High CPU/Memory**: Reduce concurrent queries or increase system resources
+- **Cache issues**: Check disk space and permissions in `~/.aws-cost-cli/cache`
+- **Network connectivity**: Verify internet connection and firewall settings
+
+#### 2. Authentication Errors
 
 ```bash
 # Verify AWS credentials
@@ -447,9 +942,12 @@ aws-cost-cli list-profiles
 
 # Test with specific profile
 aws-cost-cli query "test query" --profile your-profile-name
+
+# Run health check to verify AWS connectivity
+aws-cost-cli health check | grep -i aws
 ```
 
-#### 2. LLM Provider Issues
+#### 3. LLM Provider Issues
 
 ```bash
 # Test LLM connectivity
@@ -460,9 +958,12 @@ aws-cost-cli config show
 
 # Switch to alternative provider
 aws-cost-cli configure --provider ollama  # Local fallback
+
+# Check LLM provider status in health check
+aws-cost-cli health check | grep -i llm
 ```
 
-#### 3. Cost Explorer Access
+#### 4. Cost Explorer Access
 
 ```bash
 # Verify Cost Explorer permissions
@@ -472,7 +973,7 @@ aws ce get-cost-and-usage --time-period Start=2024-01-01,End=2024-01-02 --granul
 aws-cost-cli query "test access to cost data"
 ```
 
-#### 4. Query Understanding Issues
+#### 5. Query Understanding Issues
 
 ```bash
 # Use more specific queries with full context
@@ -485,7 +986,7 @@ aws-cost-cli query "What did I spend on compute services last month?"
 aws-cost-cli query "What are my S3 costs for last month?" --format rich
 ```
 
-#### 5. Zero Cost Results ($0.00)
+#### 6. Zero Cost Results ($0.00)
 
 If you're getting $0.00 when you expect costs:
 
@@ -535,6 +1036,7 @@ aws-cost-cli test --debug
 
 ### 3. Regular Monitoring
 
+#### Cost Monitoring
 ```bash
 # Daily cost check
 aws-cost-cli query "How much have I spent on AWS today?"
@@ -549,22 +1051,76 @@ aws-cost-cli query "Show me monthly spending trends and top services"
 aws-cost-cli query "What are my quarterly cost trends and forecasts?"
 ```
 
+#### System Health Monitoring
+```bash
+# Daily health check (add to cron)
+aws-cost-cli health check --json > /var/log/aws-cost-cli-health.log
+
+# Production monitoring with alerting
+aws-cost-cli health check || echo "Health check failed" | mail -s "AWS Cost CLI Alert" ops@company.com
+
+# Container readiness monitoring
+aws-cost-cli health ready || exit 1
+```
+
 ### 4. Security and Privacy
 
-- **Use environment variables** for API keys
-- **Rotate API keys** regularly
-- **Use Ollama** for sensitive environments
-- **Limit AWS permissions** to Cost Explorer only
-- **Review query logs** periodically
+- **Use environment variables** for API keys (never commit secrets)
+- **Rotate API keys** regularly and use secure storage
+- **Use Ollama** for sensitive environments requiring local processing
+- **Limit AWS permissions** to Cost Explorer only (principle of least privilege)
+- **Review query logs** periodically for suspicious activity
+- **Secure configuration files** with appropriate file permissions (600/640)
+- **Use enterprise templates** for production environments with enhanced security
+- **Enable audit logging** for compliance requirements
 
 ### 5. Performance Optimization
 
-- **Use caching** for repeated queries
-- **Batch similar queries** together
-- **Choose appropriate LLM provider** for your use case
-- **Monitor API usage** and costs
+- **Use caching** for repeated queries (configure appropriate TTL)
+- **Batch similar queries** together to reduce API calls
+- **Choose appropriate LLM provider** for your use case (cost vs. accuracy)
+- **Monitor API usage** and costs regularly
+- **Use production dependencies** for high-performance deployments
+- **Configure connection pooling** for better AWS API performance
+- **Monitor system health** to identify performance bottlenecks
+- **Use appropriate configuration templates** for your environment (dev vs. prod)
 
-### 6. Team Collaboration
+### 6. Environment Management
+
+#### Development Environment
+```bash
+# Use development template for faster iteration
+cp config/templates/development.yaml ~/.aws-cost-cli/config.yaml
+
+# Install basic dependencies
+pip install -e .[dev]
+
+# Enable debug logging
+export AWS_COST_CLI_LOG_LEVEL=DEBUG
+```
+
+#### Production Environment  
+```bash
+# Use production template for reliability
+cp config/templates/production.yaml ~/.aws-cost-cli/config.yaml
+
+# Install production dependencies
+pip install -r requirements-prod.txt
+
+# Configure health monitoring
+aws-cost-cli health serve --host 0.0.0.0 --port 8081 &
+```
+
+#### Multi-Account Enterprise
+```bash
+# Use multi-account template
+cp config/templates/multi-account.yaml ~/.aws-cost-cli/config.yaml
+
+# Configure cross-account roles
+aws-cost-cli configure --account production --role arn:aws:iam::123456:role/CostExplorer
+```
+
+### 7. Team Collaboration
 
 ```bash
 # Standardize queries across team
