@@ -15,7 +15,10 @@ from botocore.exceptions import (
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 
-from .models import QueryParameters, CostData, CostResult, CostAmount, TimePeriod, Group, TimePeriodGranularity, MetricType
+from .models import (
+    QueryParameters, CostData, CostResult, CostAmount, TimePeriod, Group, 
+    TimePeriodGranularity, MetricType, TrendAnalysisType, DateRangeType
+)
 from .exceptions import (
     AWSCredentialsError,
     AWSPermissionsError,
@@ -27,6 +30,7 @@ from .exceptions import (
     is_retryable_error,
     get_retry_delay
 )
+from .performance import PerformanceOptimizedClient
 
 
 class CredentialManager:
@@ -606,6 +610,230 @@ class AWSCostClient:
             return 0
         
         return self.cache_manager.invalidate_cache(pattern)
+    
+    def get_cost_with_trend_analysis(self, params: QueryParameters) -> CostData:
+        """
+        Get cost data with trend analysis if requested.
+        
+        Args:
+            params: Query parameters including trend analysis settings
+            
+        Returns:
+            CostData with trend analysis included
+        """
+        # Get current period data
+        current_data = self.get_cost_and_usage(params)
+        
+        # If trend analysis is requested, get comparison data
+        if params.trend_analysis:
+            from .date_utils import DateRangeCalculator
+            from .trend_analysis import TrendAnalyzer
+            
+            calculator = DateRangeCalculator(params.fiscal_year_start_month)
+            analyzer = TrendAnalyzer()
+            
+            # Calculate comparison period
+            if params.trend_analysis == TrendAnalysisType.YEAR_OVER_YEAR:
+                comparison_period = calculator.get_previous_period(
+                    params.time_period, "year_ago"
+                )
+            elif params.trend_analysis == TrendAnalysisType.MONTH_OVER_MONTH:
+                comparison_period = calculator.get_previous_period(
+                    params.time_period, "month_ago"
+                )
+            elif params.trend_analysis == TrendAnalysisType.QUARTER_OVER_QUARTER:
+                comparison_period = calculator.get_previous_period(
+                    params.time_period, "quarter_ago"
+                )
+            else:  # PERIOD_OVER_PERIOD
+                comparison_period = calculator.get_previous_period(
+                    params.time_period, "same_length"
+                )
+            
+            # Create comparison query parameters
+            comparison_params = QueryParameters(
+                service=params.service,
+                time_period=comparison_period,
+                granularity=params.granularity,
+                metrics=params.metrics,
+                group_by=params.group_by,
+                fiscal_year_start_month=params.fiscal_year_start_month
+            )
+            
+            # Get comparison data
+            comparison_data = self.get_cost_and_usage(comparison_params)
+            
+            # Analyze trend
+            trend_data = analyzer.analyze_trend(
+                current_data, comparison_data, params.trend_analysis
+            )
+            
+            # Add trend data to result
+            current_data.trend_data = trend_data
+        
+        return current_data
+    
+    def get_cost_with_forecast(self, params: QueryParameters) -> CostData:
+        """
+        Get cost data with forecasting if requested.
+        
+        Args:
+            params: Query parameters including forecast settings
+            
+        Returns:
+            CostData with forecast data included
+        """
+        # Get current data
+        cost_data = self.get_cost_and_usage(params)
+        
+        # If forecast is requested, generate forecast
+        if params.include_forecast:
+            from .trend_analysis import CostForecaster
+            
+            forecaster = CostForecaster()
+            
+            # Get historical data for forecasting (last 12 months)
+            historical_periods = self._get_historical_periods(
+                params.time_period.end, 12
+            )
+            
+            historical_data = []
+            for period in historical_periods:
+                historical_params = QueryParameters(
+                    service=params.service,
+                    time_period=period,
+                    granularity=TimePeriodGranularity.MONTHLY,
+                    metrics=params.metrics,
+                    group_by=params.group_by,
+                    fiscal_year_start_month=params.fiscal_year_start_month
+                )
+                
+                try:
+                    historical_cost_data = self.get_cost_and_usage(historical_params)
+                    historical_data.append(historical_cost_data)
+                except Exception:
+                    # Skip periods with no data or errors
+                    continue
+            
+            # Generate forecast if we have enough historical data
+            if len(historical_data) >= 3:
+                try:
+                    forecast_data = forecaster.forecast_costs(
+                        historical_data, params.forecast_months
+                    )
+                    cost_data.forecast_data = forecast_data
+                except Exception:
+                    # Forecasting failed, continue without forecast
+                    pass
+        
+        return cost_data
+    
+    def get_advanced_cost_data(self, params: QueryParameters) -> CostData:
+        """
+        Get cost data with all advanced features (trend analysis, forecasting).
+        
+        Args:
+            params: Query parameters with advanced features
+            
+        Returns:
+            CostData with all requested advanced features
+        """
+        # Start with basic cost data
+        cost_data = self.get_cost_and_usage(params)
+        
+        # Add trend analysis if requested
+        if params.trend_analysis:
+            trend_data = self.get_cost_with_trend_analysis(params)
+            cost_data.trend_data = trend_data.trend_data
+        
+        # Add forecast if requested
+        if params.include_forecast:
+            forecast_data = self.get_cost_with_forecast(params)
+            cost_data.forecast_data = forecast_data.forecast_data
+        
+        return cost_data
+    
+    def create_performance_optimized_client(self, enable_parallel: bool = True,
+                                          enable_compression: bool = True,
+                                          enable_monitoring: bool = True) -> 'PerformanceOptimizedClient':
+        """
+        Create a performance-optimized version of this client.
+        
+        Args:
+            enable_parallel: Enable parallel query execution
+            enable_compression: Enable cache compression
+            enable_monitoring: Enable performance monitoring
+            
+        Returns:
+            PerformanceOptimizedClient instance
+        """
+        return PerformanceOptimizedClient(
+            aws_client=self,
+            cache_manager=self.cache_manager,
+            enable_parallel=enable_parallel,
+            enable_compression=enable_compression,
+            enable_monitoring=enable_monitoring
+        )
+    
+    def get_cost_and_usage_with_performance_optimization(self, params: QueryParameters, 
+                                                       use_cache: bool = True,
+                                                       enable_parallel: bool = True,
+                                                       enable_compression: bool = True,
+                                                       max_chunk_days: int = 90) -> CostData:
+        """
+        Get cost data with automatic performance optimizations.
+        
+        Args:
+            params: Query parameters
+            use_cache: Whether to use caching
+            enable_parallel: Enable parallel execution for large queries
+            enable_compression: Enable cache compression
+            max_chunk_days: Maximum days per parallel chunk
+            
+        Returns:
+            CostData with performance optimizations applied
+        """
+        # Create temporary performance-optimized client
+        perf_client = self.create_performance_optimized_client(
+            enable_parallel=enable_parallel,
+            enable_compression=enable_compression,
+            enable_monitoring=True
+        )
+        
+        return perf_client.get_cost_and_usage_optimized(
+            params=params,
+            use_cache=use_cache,
+            max_chunk_days=max_chunk_days
+        )
+    
+    def _get_historical_periods(self, end_date: datetime, months: int) -> List[TimePeriod]:
+        """
+        Get list of historical monthly periods.
+        
+        Args:
+            end_date: End date to work backwards from
+            months: Number of months to go back
+            
+        Returns:
+            List of TimePeriod objects for historical months
+        """
+        periods = []
+        current_date = end_date
+        
+        for _ in range(months):
+            # Go back one month
+            if current_date.month == 1:
+                month_start = current_date.replace(year=current_date.year - 1, month=12, day=1)
+            else:
+                month_start = current_date.replace(month=current_date.month - 1, day=1)
+            
+            # End of month is start of next month
+            month_end = current_date.replace(day=1)
+            
+            periods.append(TimePeriod(start=month_start, end=month_end))
+            current_date = month_start
+        
+        return list(reversed(periods))  # Return in chronological order
     
     def prefetch_data(self, queries: List[QueryParameters]) -> Dict[str, Any]:
         """

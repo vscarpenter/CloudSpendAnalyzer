@@ -102,6 +102,9 @@ class ConfigManager:
             "AWS_COST_CLI_DEFAULT_CURRENCY": "default_currency",
             "OPENAI_API_KEY": ("llm_config", "openai", "api_key"),
             "ANTHROPIC_API_KEY": ("llm_config", "anthropic", "api_key"),
+            "AWS_BEDROCK_REGION": ("llm_config", "bedrock", "region"),
+            "AWS_BEDROCK_MODEL": ("llm_config", "bedrock", "model"),
+            "AWS_BEDROCK_PROFILE": ("llm_config", "bedrock", "profile"),
         }
         
         for env_var, config_key in env_mappings.items():

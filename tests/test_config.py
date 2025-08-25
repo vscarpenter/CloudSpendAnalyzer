@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from aws_cost_cli.config import ConfigManager
 from aws_cost_cli.models import Config
+from aws_cost_cli.exceptions import ConfigurationError
 
 
 class TestConfigManager:
@@ -95,7 +96,7 @@ class TestConfigManager:
         
         try:
             manager = ConfigManager()
-            with pytest.raises(ValueError, match="Invalid configuration file format"):
+            with pytest.raises(ConfigurationError, match="Invalid configuration file format"):
                 manager.load_config(config_path)
         finally:
             os.unlink(config_path)
@@ -164,7 +165,7 @@ class TestConfigManager:
         config = Config(llm_provider="invalid_provider")
         
         manager = ConfigManager()
-        with pytest.raises(ValueError, match="Invalid LLM provider"):
+        with pytest.raises(ConfigurationError, match="Invalid LLM provider"):
             manager.validate_config(config)
     
     def test_validate_config_invalid_format(self):
@@ -172,7 +173,7 @@ class TestConfigManager:
         config = Config(output_format="invalid_format")
         
         manager = ConfigManager()
-        with pytest.raises(ValueError, match="Invalid output format"):
+        with pytest.raises(ConfigurationError, match="Invalid output format"):
             manager.validate_config(config)
     
     def test_validate_config_negative_ttl(self):
@@ -180,7 +181,7 @@ class TestConfigManager:
         config = Config(cache_ttl=-100)
         
         manager = ConfigManager()
-        with pytest.raises(ValueError, match="Cache TTL must be non-negative"):
+        with pytest.raises(ConfigurationError, match="Cache TTL must be non-negative"):
             manager.validate_config(config)
     
     def test_auto_discover_config_file(self):

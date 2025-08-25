@@ -105,6 +105,12 @@ Extract these parameters from the user query:
 - granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
 - metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
 - group_by: Array of grouping dimensions like ["SERVICE"] or null
+- date_range_type: QUARTER, FISCAL_YEAR, CALENDAR_YEAR, or CUSTOM (null if not specified)
+- fiscal_year_start_month: Month when fiscal year starts (1-12, default: 1)
+- trend_analysis: PERIOD_OVER_PERIOD, YEAR_OVER_YEAR, MONTH_OVER_MONTH, QUARTER_OVER_QUARTER (null if not requested)
+- include_forecast: true if user asks for forecast/prediction, false otherwise
+- forecast_months: Number of months to forecast (default: 3)
+- cost_allocation_tags: Array of tag keys for cost allocation (null if not specified)
 
 AWS Service Name Mapping (use the exact names on the right):
 - S3 → "Amazon Simple Storage Service"
@@ -123,7 +129,27 @@ For relative dates:
 - "this year" = 2025 (2025-01-01 to 2025-08-24)
 - "last year" = 2024 (2024-01-01 to 2025-01-01)
 
-For date ranges like "from X to Y", use the full range including both dates.
+For quarters:
+- "Q1 2025" = 2025-01-01 to 2025-04-01
+- "Q2 2025" = 2025-04-01 to 2025-07-01
+- "Q3 2025" = 2025-07-01 to 2025-10-01
+- "Q4 2025" = 2025-10-01 to 2026-01-01
+- "this quarter" = Q3 2025 (2025-07-01 to 2025-10-01)
+- "last quarter" = Q2 2025 (2025-04-01 to 2025-07-01)
+
+For fiscal years (assuming January start unless specified):
+- "FY2025" = 2025-01-01 to 2026-01-01
+- "fiscal year 2025" = 2025-01-01 to 2026-01-01
+
+For trend analysis queries:
+- "compared to last month" → trend_analysis: "MONTH_OVER_MONTH"
+- "vs last year" → trend_analysis: "YEAR_OVER_YEAR"
+- "compared to last quarter" → trend_analysis: "QUARTER_OVER_QUARTER"
+- "trend analysis" → trend_analysis: "PERIOD_OVER_PERIOD"
+
+For forecast queries:
+- "forecast", "predict", "projection" → include_forecast: true
+- "next 6 months" → forecast_months: 6
 
 IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
 - "What services did I use?"
@@ -138,7 +164,13 @@ Return only valid JSON in this format:
   "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
-  "group_by": ["SERVICE"]
+  "group_by": ["SERVICE"],
+  "date_range_type": "QUARTER",
+  "fiscal_year_start_month": 1,
+  "trend_analysis": "MONTH_OVER_MONTH",
+  "include_forecast": false,
+  "forecast_months": 3,
+  "cost_allocation_tags": null
 }"""
     
     def _parse_llm_response(self, content: str) -> Dict[str, Any]:
@@ -284,6 +316,202 @@ Return only valid JSON in this format:
                 return json.loads(content)
         except json.JSONDecodeError:
             raise ValueError(f"Could not parse LLM response as JSON: {content}")
+
+
+class BedrockProvider(LLMProvider):
+    """AWS Bedrock provider for query parsing."""
+    
+    def __init__(self, model: str = "anthropic.claude-3-haiku-20240307-v1:0", region: str = "us-east-1", profile: Optional[str] = None):
+        """
+        Initialize Bedrock provider.
+        
+        Args:
+            model: Bedrock model ID (default: anthropic.claude-3-haiku-20240307-v1:0)
+            region: AWS region for Bedrock (default: us-east-1)
+            profile: AWS profile to use (optional)
+        """
+        self.model = model
+        self.region = region
+        self.profile = profile
+        self._client = None
+    
+    def _get_client(self):
+        """Get Bedrock client, creating it if necessary."""
+        if self._client is None:
+            try:
+                import boto3
+                session = boto3.Session(profile_name=self.profile) if self.profile else boto3.Session()
+                self._client = session.client('bedrock-runtime', region_name=self.region)
+            except ImportError:
+                raise ImportError("boto3 package is required for Bedrock provider")
+        return self._client
+    
+    def is_available(self) -> bool:
+        """Check if Bedrock is available and configured."""
+        try:
+            client = self._get_client()
+            # Try a simple operation to verify credentials and permissions
+            # We'll just check if we can create the client without errors
+            return True
+        except Exception:
+            return False
+    
+    def parse_query(self, query: str) -> Dict[str, Any]:
+        """Parse query using AWS Bedrock."""
+        if not self.is_available():
+            raise LLMProviderError("Bedrock provider is not available", provider="bedrock")
+        
+        client = self._get_client()
+        
+        system_prompt = self._get_system_prompt()
+        
+        try:
+            # Prepare the request based on model type
+            if "anthropic.claude" in self.model:
+                # Claude models use the messages format
+                body = {
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "max_tokens": 500,
+                    "temperature": 0.1,
+                    "system": system_prompt,
+                    "messages": [
+                        {"role": "user", "content": query}
+                    ]
+                }
+            elif "amazon.titan" in self.model:
+                # Titan models use a different format
+                body = {
+                    "inputText": f"{system_prompt}\n\nUser query: {query}\n\nJSON response:",
+                    "textGenerationConfig": {
+                        "maxTokenCount": 500,
+                        "temperature": 0.1,
+                        "topP": 0.9
+                    }
+                }
+            elif "ai21.j2" in self.model:
+                # Jurassic models use another format
+                body = {
+                    "prompt": f"{system_prompt}\n\nUser query: {query}\n\nJSON response:",
+                    "maxTokens": 500,
+                    "temperature": 0.1,
+                    "topP": 0.9
+                }
+            else:
+                # Default to Claude format for unknown models
+                body = {
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "max_tokens": 500,
+                    "temperature": 0.1,
+                    "system": system_prompt,
+                    "messages": [
+                        {"role": "user", "content": query}
+                    ]
+                }
+            
+            import json as json_module
+            response = client.invoke_model(
+                modelId=self.model,
+                body=json_module.dumps(body),
+                contentType="application/json",
+                accept="application/json"
+            )
+            
+            response_body = json_module.loads(response['body'].read())
+            
+            # Extract content based on model type
+            if "anthropic.claude" in self.model:
+                content = response_body['content'][0]['text'].strip()
+            elif "amazon.titan" in self.model:
+                content = response_body['results'][0]['outputText'].strip()
+            elif "ai21.j2" in self.model:
+                content = response_body['completions'][0]['data']['text'].strip()
+            else:
+                # Try to extract from common response formats
+                if 'content' in response_body and isinstance(response_body['content'], list):
+                    content = response_body['content'][0]['text'].strip()
+                elif 'results' in response_body:
+                    content = response_body['results'][0]['outputText'].strip()
+                elif 'completions' in response_body:
+                    content = response_body['completions'][0]['data']['text'].strip()
+                else:
+                    content = str(response_body).strip()
+            
+            return self._parse_llm_response(content)
+        
+        except ImportError:
+            raise LLMProviderError("boto3 package not installed", provider="bedrock")
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "credentials" in error_msg or "access" in error_msg or "unauthorized" in error_msg:
+                raise LLMProviderError("Invalid AWS credentials or insufficient permissions for Bedrock", provider="bedrock")
+            elif "network" in error_msg or "connection" in error_msg:
+                raise NetworkError(f"Network error connecting to Bedrock: {e}")
+            elif "model" in error_msg and "not found" in error_msg:
+                raise LLMProviderError(f"Bedrock model not found: {self.model}", provider="bedrock")
+            else:
+                raise LLMProviderError(f"Bedrock API error: {str(e)}", provider="bedrock")
+    
+    def _get_system_prompt(self) -> str:
+        """Get the system prompt for query parsing."""
+        return """You are an AWS cost analysis assistant. Parse natural language queries about AWS costs and return structured JSON parameters.
+
+IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relative dates.
+
+Extract these parameters from the user query:
+- service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
+- start_date: Start date in YYYY-MM-DD format or null
+- end_date: End date in YYYY-MM-DD format or null  
+- granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
+- metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
+- group_by: Array of grouping dimensions like ["SERVICE"] or null
+
+AWS Service Name Mapping (use the exact names on the right):
+- S3 → "Amazon Simple Storage Service"
+- EC2 → "Amazon Elastic Compute Cloud - Compute"
+- RDS → "Amazon Relational Database Service"
+- Lambda → "AWS Lambda"
+- CloudFront → "Amazon CloudFront"
+- VPC → "Amazon Virtual Private Cloud"
+- Route 53 → "Amazon Route 53"
+- KMS → "AWS Key Management Service"
+- Secrets Manager → "AWS Secrets Manager"
+
+For relative dates:
+- "last month" = July 2025 (2025-07-01 to 2025-08-01)
+- "this month" = August 2025 (2025-08-01 to 2025-08-24)
+- "this year" = 2025 (2025-01-01 to 2025-08-24)
+- "last year" = 2024 (2024-01-01 to 2025-01-01)
+
+For specific months like "july 2025" or "in july 2025":
+- Use the full month range: 2025-07-01 to 2025-08-01 (end date is first day of next month)
+
+For date ranges like "from X to Y", use the full range including both dates.
+
+For queries asking about service breakdown, set group_by to ["SERVICE"].
+
+Return only valid JSON in this format:
+{
+  "service": "Amazon Elastic Compute Cloud - Compute",
+  "start_date": "2025-07-01", 
+  "end_date": "2025-08-01",
+  "granularity": "MONTHLY",
+  "metrics": ["BlendedCost"],
+  "group_by": null
+}"""
+    
+    def _parse_llm_response(self, content: str) -> Dict[str, Any]:
+        """Parse LLM response and extract JSON."""
+        try:
+            # Try to find JSON in the response
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                return json.loads(json_str)
+            else:
+                # If no JSON found, try parsing the entire content
+                return json.loads(content)
+        except json.JSONDecodeError:
+            raise QueryParsingError(f"Could not parse LLM response as JSON: {content}")
 
 
 class OllamaProvider(LLMProvider):
@@ -452,6 +680,16 @@ class FallbackParser:
             r'\bjuly\s+2025\b': self._july_2025,
             r'\bin\s+july\s+2025\b': self._july_2025,
             r'\bjuly\b': self._july_current_or_last,
+            # Quarter patterns
+            r'\bq1\s+2025\b': self._q1_2025,
+            r'\bq2\s+2025\b': self._q2_2025,
+            r'\bq3\s+2025\b': self._q3_2025,
+            r'\bq4\s+2025\b': self._q4_2025,
+            r'\bthis\s+quarter\b': self._this_quarter,
+            r'\blast\s+quarter\b': self._last_quarter,
+            # Fiscal year patterns
+            r'\bfy\s*2025\b': self._fy_2025,
+            r'\bfiscal\s+year\s+2025\b': self._fy_2025,
         }
         
         self.granularity_patterns = {
@@ -477,6 +715,28 @@ class FallbackParser:
             r'\bby\s+service\b',
             r'\beach\s+service\b',
         ]
+        
+        # Patterns for trend analysis
+        self.trend_patterns = {
+            r'\bcompared\s+to\s+last\s+month\b': 'MONTH_OVER_MONTH',
+            r'\bvs\s+last\s+month\b': 'MONTH_OVER_MONTH',
+            r'\bcompared\s+to\s+last\s+year\b': 'YEAR_OVER_YEAR',
+            r'\bvs\s+last\s+year\b': 'YEAR_OVER_YEAR',
+            r'\bcompared\s+to\s+last\s+quarter\b': 'QUARTER_OVER_QUARTER',
+            r'\bvs\s+last\s+quarter\b': 'QUARTER_OVER_QUARTER',
+            r'\btrend\s+analysis\b': 'PERIOD_OVER_PERIOD',
+            r'\bperiod\s+over\s+period\b': 'PERIOD_OVER_PERIOD',
+        }
+        
+        # Patterns for forecasting
+        self.forecast_patterns = [
+            r'\bforecast\b',
+            r'\bpredict\b',
+            r'\bprojection\b',
+            r'\bwhat\s+will\s+i\s+spend\b',
+            r'\bfuture\s+costs?\b',
+            r'\bnext\s+\d+\s+months?\b',
+        ]
     
     def parse_query(self, query: str) -> Dict[str, Any]:
         """Parse query using pattern matching fallback."""
@@ -488,7 +748,13 @@ class FallbackParser:
             "end_date": None,
             "granularity": self._extract_granularity(query_lower),
             "metrics": ["BlendedCost"],
-            "group_by": self._extract_group_by(query_lower)
+            "group_by": self._extract_group_by(query_lower),
+            "date_range_type": self._extract_date_range_type(query_lower),
+            "fiscal_year_start_month": 1,
+            "trend_analysis": self._extract_trend_analysis(query_lower),
+            "include_forecast": self._extract_forecast_request(query_lower),
+            "forecast_months": self._extract_forecast_months(query_lower),
+            "cost_allocation_tags": None
         }
         
         # Extract time period
@@ -612,6 +878,82 @@ class FallbackParser:
     def _july_current_or_last(self) -> tuple[datetime, datetime]:
         """Get July date range (2025 since we're in 2025)."""
         return self._july_2025()
+    
+    def _q1_2025(self) -> tuple[datetime, datetime]:
+        """Get Q1 2025 date range."""
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 4, 1, tzinfo=timezone.utc)
+        return start, end
+    
+    def _q2_2025(self) -> tuple[datetime, datetime]:
+        """Get Q2 2025 date range."""
+        start = datetime(2025, 4, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 7, 1, tzinfo=timezone.utc)
+        return start, end
+    
+    def _q3_2025(self) -> tuple[datetime, datetime]:
+        """Get Q3 2025 date range."""
+        start = datetime(2025, 7, 1, tzinfo=timezone.utc)
+        end = datetime(2025, 10, 1, tzinfo=timezone.utc)
+        return start, end
+    
+    def _q4_2025(self) -> tuple[datetime, datetime]:
+        """Get Q4 2025 date range."""
+        start = datetime(2025, 10, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        return start, end
+    
+    def _this_quarter(self) -> tuple[datetime, datetime]:
+        """Get current quarter (Q3 2025)."""
+        return self._q3_2025()
+    
+    def _last_quarter(self) -> tuple[datetime, datetime]:
+        """Get last quarter (Q2 2025)."""
+        return self._q2_2025()
+    
+    def _fy_2025(self) -> tuple[datetime, datetime]:
+        """Get fiscal year 2025 (assuming January start)."""
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        return start, end
+    
+    def _extract_date_range_type(self, query: str) -> Optional[str]:
+        """Extract date range type from query."""
+        if re.search(r'\bq[1-4]\b', query, re.IGNORECASE):
+            return "QUARTER"
+        elif re.search(r'\bfy\s*\d{4}\b|\bfiscal\s+year\b', query, re.IGNORECASE):
+            return "FISCAL_YEAR"
+        elif re.search(r'\b\d{4}\b', query) and not re.search(r'\b\d{4}-\d{2}-\d{2}\b', query):
+            return "CALENDAR_YEAR"
+        return None
+    
+    def _extract_trend_analysis(self, query: str) -> Optional[str]:
+        """Extract trend analysis type from query."""
+        for pattern, trend_type in self.trend_patterns.items():
+            if re.search(pattern, query, re.IGNORECASE):
+                return trend_type
+        return None
+    
+    def _extract_forecast_request(self, query: str) -> bool:
+        """Check if query requests forecasting."""
+        for pattern in self.forecast_patterns:
+            if re.search(pattern, query, re.IGNORECASE):
+                return True
+        return False
+    
+    def _extract_forecast_months(self, query: str) -> int:
+        """Extract number of months to forecast."""
+        # Look for patterns like "next 6 months"
+        match = re.search(r'\bnext\s+(\d+)\s+months?\b', query, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+        
+        # Look for patterns like "6 month forecast"
+        match = re.search(r'\b(\d+)\s+months?\s+forecast\b', query, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+        
+        return 3  # Default to 3 months
 
 
 class QueryParser:
@@ -644,6 +986,12 @@ class QueryParser:
             model = self.llm_config.get('model', 'claude-3-haiku-20240307')
             if api_key:
                 self._providers['anthropic'] = AnthropicProvider(api_key, model)
+        
+        elif provider_type == 'bedrock':
+            model = self.llm_config.get('model', 'anthropic.claude-3-haiku-20240307-v1:0')
+            region = self.llm_config.get('region', 'us-east-1')
+            profile = self.llm_config.get('profile')
+            self._providers['bedrock'] = BedrockProvider(model, region, profile)
         
         elif provider_type == 'ollama':
             model = self.llm_config.get('model', 'llama2')
@@ -778,6 +1126,8 @@ class QueryParser:
     
     def _convert_to_query_parameters(self, result: Dict[str, Any]) -> QueryParameters:
         """Convert parsed result dictionary to QueryParameters object."""
+        from .models import DateRangeType, TrendAnalysisType
+        
         # Convert time period
         time_period = None
         if result.get('start_date') and result.get('end_date'):
@@ -806,10 +1156,33 @@ class QueryParser:
             if converted_metrics:
                 metrics = converted_metrics
         
+        # Convert date range type
+        date_range_type = None
+        if result.get('date_range_type'):
+            try:
+                date_range_type = DateRangeType(result['date_range_type'])
+            except ValueError:
+                pass
+        
+        # Convert trend analysis type
+        trend_analysis = None
+        if result.get('trend_analysis'):
+            try:
+                trend_analysis = TrendAnalysisType(result['trend_analysis'])
+            except ValueError:
+                pass
+        
         return QueryParameters(
             service=result.get('service'),
             time_period=time_period,
             granularity=granularity,
             metrics=metrics,
-            group_by=result.get('group_by')
+            group_by=result.get('group_by'),
+            date_range_type=date_range_type,
+            fiscal_year_start_month=result.get('fiscal_year_start_month', 1),
+            trend_analysis=trend_analysis,
+            comparison_period=None,  # Will be calculated later if needed
+            include_forecast=result.get('include_forecast', False),
+            forecast_months=result.get('forecast_months', 3),
+            cost_allocation_tags=result.get('cost_allocation_tags')
         )

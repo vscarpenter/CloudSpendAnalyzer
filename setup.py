@@ -8,12 +8,12 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="aws-cost-explorer-cli",
     version="0.1.0",
-    author="AWS Cost CLI Team",
-    author_email="team@example.com",
+    author="Vinny Carpenter",
+    author_email="vinny@vinny.dev",
     description="A CLI tool for querying AWS cost data using natural language",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/example/aws-cost-explorer-cli",
+    url="https://github.com/vinnycarpenter/aws-cost-explorer-cli",
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     classifiers=[

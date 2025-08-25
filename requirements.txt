@@ -7,6 +7,9 @@ openai>=1.0.0
 anthropic>=0.7.0
 requests>=2.28.0
 
+# Export dependencies
+openpyxl>=3.0.0  # For Excel export (optional)
+
 # Development dependencies
 pytest>=7.0.0
 pytest-cov>=4.0.0

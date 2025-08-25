@@ -92,28 +92,28 @@
   - Set up entry points for command-line installation
   - _Requirements: 8.1_
 
-- [ ] 14. Add AWS Bedrock LLM provider support
+- [x] 14. Add AWS Bedrock LLM provider support
   - Implement BedrockProvider class for AWS Bedrock integration
   - Add support for Claude and other Bedrock models
   - Write unit tests for Bedrock provider functionality
   - Update configuration system to support Bedrock settings
   - _Requirements: 9.1, 9.4_
 
-- [ ] 15. Enhance advanced query features
+- [x] 15. Enhance advanced query features
   - Implement support for more complex date range specifications (quarters, fiscal years)
   - Add cost trend analysis and period-over-period comparisons
   - Implement cost forecasting based on historical data
   - Add support for cost allocation tags and resource grouping
   - _Requirements: 1.2, 2.2, 3.3_
 
-- [ ] 16. Add data export capabilities
+- [x] 16. Add data export capabilities
   - Implement CSV export functionality for cost data
   - Add JSON export with structured data format
   - Create Excel export with charts and formatting
   - Add email report functionality with scheduled reports
   - _Requirements: 6.1, 6.2_
 
-- [ ] 17. Implement cost optimization recommendations
+- [x] 17. Implement cost optimization recommendations
   - Add analysis of unused resources and rightsizing opportunities
   - Implement Reserved Instance and Savings Plan recommendations
   - Create cost anomaly detection and alerting
@@ -127,14 +127,14 @@
   - Add consolidated billing analysis
   - _Requirements: 2.2, 3.1_
 
-- [ ] 19. Create interactive query builder
+- [x] 19. Create interactive query builder
   - Implement guided query construction with prompts
   - Add query templates for common use cases
   - Create query history and favorites functionality
   - Add query validation and suggestion system
   - _Requirements: 5.1, 5.3_
 
-- [ ] 20. Add performance optimizations
+- [x] 20. Add performance optimizations
   - Implement parallel API calls for large queries
   - Add query result pagination for large datasets
   - Optimize cache storage with compression

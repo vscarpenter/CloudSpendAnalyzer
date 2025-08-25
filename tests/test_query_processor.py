@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch, MagicMock
 import pytest
 
 from src.aws_cost_cli.query_processor import (
-    QueryParser, FallbackParser, OpenAIProvider, AnthropicProvider, OllamaProvider
+    QueryParser, FallbackParser, OpenAIProvider, AnthropicProvider, BedrockProvider, OllamaProvider
 )
 from src.aws_cost_cli.models import QueryParameters, TimePeriod, TimePeriodGranularity, MetricType
 from src.aws_cost_cli.exceptions import LLMProviderError, QueryParsingError, ValidationError
@@ -198,6 +198,172 @@ class TestOpenAIProvider:
             self.provider._parse_llm_response(content)
 
 
+class TestBedrockProvider:
+    """Test cases for BedrockProvider class."""
+    
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.provider = BedrockProvider(
+            model="anthropic.claude-3-haiku-20240307-v1:0",
+            region="us-east-1"
+        )
+    
+    def test_is_available_with_credentials(self):
+        """Test availability check with AWS credentials."""
+        with patch('boto3.Session') as mock_session:
+            mock_client = Mock()
+            mock_session.return_value.client.return_value = mock_client
+            assert self.provider.is_available() is True
+    
+    def test_is_available_import_error(self):
+        """Test availability check when boto3 package is not installed."""
+        with patch('boto3.Session', side_effect=ImportError()):
+            assert self.provider.is_available() is False
+    
+    def test_is_available_credentials_error(self):
+        """Test availability check with credential errors."""
+        with patch('boto3.Session', side_effect=Exception("Credentials error")):
+            assert self.provider.is_available() is False
+    
+    @patch('boto3.Session')
+    def test_parse_query_claude_success(self, mock_session):
+        """Test successful query parsing with Claude model."""
+        # Mock Bedrock response for Claude
+        mock_response = {
+            'body': Mock(),
+            'ResponseMetadata': {'HTTPStatusCode': 200}
+        }
+        mock_response['body'].read.return_value = json.dumps({
+            'content': [{
+                'text': '''
+                {
+                    "service": "Amazon Elastic Compute Cloud - Compute",
+                    "start_date": "2025-07-01",
+                    "end_date": "2025-08-01",
+                    "granularity": "MONTHLY",
+                    "metrics": ["BlendedCost"],
+                    "group_by": null
+                }
+                '''
+            }]
+        }).encode('utf-8')
+        
+        mock_client = Mock()
+        mock_client.invoke_model.return_value = mock_response
+        mock_session.return_value.client.return_value = mock_client
+        
+        result = self.provider.parse_query("EC2 costs last month")
+        
+        assert result["service"] == "Amazon Elastic Compute Cloud - Compute"
+        assert result["start_date"] == "2025-07-01"
+        assert result["granularity"] == "MONTHLY"
+        
+        # Verify the correct model was called
+        mock_client.invoke_model.assert_called_once()
+        call_args = mock_client.invoke_model.call_args
+        assert call_args[1]['modelId'] == "anthropic.claude-3-haiku-20240307-v1:0"
+    
+    @patch('boto3.Session')
+    def test_parse_query_titan_success(self, mock_session):
+        """Test successful query parsing with Titan model."""
+        provider = BedrockProvider(model="amazon.titan-text-express-v1", region="us-east-1")
+        
+        # Mock Bedrock response for Titan
+        mock_response = {
+            'body': Mock(),
+            'ResponseMetadata': {'HTTPStatusCode': 200}
+        }
+        mock_response['body'].read.return_value = json.dumps({
+            'results': [{
+                'outputText': '''
+                {
+                    "service": "Amazon Simple Storage Service",
+                    "start_date": "2025-08-01",
+                    "end_date": "2025-08-24",
+                    "granularity": "MONTHLY",
+                    "metrics": ["BlendedCost"],
+                    "group_by": null
+                }
+                '''
+            }]
+        }).encode('utf-8')
+        
+        mock_client = Mock()
+        mock_client.invoke_model.return_value = mock_response
+        mock_session.return_value.client.return_value = mock_client
+        
+        result = provider.parse_query("S3 costs this month")
+        
+        assert result["service"] == "Amazon Simple Storage Service"
+        assert result["start_date"] == "2025-08-01"
+        assert result["granularity"] == "MONTHLY"
+    
+    @patch('boto3.Session')
+    def test_parse_query_credentials_error(self, mock_session):
+        """Test handling of AWS credentials errors."""
+        mock_client = Mock()
+        mock_client.invoke_model.side_effect = Exception("UnauthorizedOperation")
+        mock_session.return_value.client.return_value = mock_client
+        
+        with pytest.raises(LLMProviderError, match="Invalid AWS credentials"):
+            self.provider.parse_query("test query")
+    
+    @patch('boto3.Session')
+    def test_parse_query_model_not_found(self, mock_session):
+        """Test handling of model not found errors."""
+        mock_client = Mock()
+        mock_client.invoke_model.side_effect = Exception("model not found")
+        mock_session.return_value.client.return_value = mock_client
+        
+        with pytest.raises(LLMProviderError, match="Bedrock model not found"):
+            self.provider.parse_query("test query")
+    
+    @patch('boto3.Session')
+    def test_parse_query_api_error(self, mock_session):
+        """Test handling of general Bedrock API errors."""
+        mock_client = Mock()
+        mock_client.invoke_model.side_effect = Exception("Service error")
+        mock_session.return_value.client.return_value = mock_client
+        
+        with pytest.raises(LLMProviderError, match="Bedrock API error"):
+            self.provider.parse_query("test query")
+    
+    def test_parse_llm_response_valid_json(self):
+        """Test parsing valid JSON response."""
+        content = '{"service": "EC2", "granularity": "MONTHLY"}'
+        result = self.provider._parse_llm_response(content)
+        
+        assert result["service"] == "EC2"
+        assert result["granularity"] == "MONTHLY"
+    
+    def test_parse_llm_response_json_in_text(self):
+        """Test parsing JSON embedded in text."""
+        content = 'Here is the result: {"service": "S3", "granularity": "DAILY"} as requested.'
+        result = self.provider._parse_llm_response(content)
+        
+        assert result["service"] == "S3"
+        assert result["granularity"] == "DAILY"
+    
+    def test_parse_llm_response_invalid_json(self):
+        """Test handling of invalid JSON response."""
+        content = "This is not valid JSON"
+        
+        with pytest.raises(QueryParsingError, match="Could not parse LLM response as JSON"):
+            self.provider._parse_llm_response(content)
+    
+    def test_init_with_profile(self):
+        """Test initialization with AWS profile."""
+        provider = BedrockProvider(
+            model="anthropic.claude-3-haiku-20240307-v1:0",
+            region="us-west-2",
+            profile="production"
+        )
+        
+        assert provider.model == "anthropic.claude-3-haiku-20240307-v1:0"
+        assert provider.region == "us-west-2"
+        assert provider.profile == "production"
+
+
 class TestAnthropicProvider:
     """Test cases for AnthropicProvider class."""
     
@@ -329,6 +495,29 @@ class TestQueryParser:
         with patch('src.aws_cost_cli.query_processor.AnthropicProvider') as mock_provider:
             parser = QueryParser(config)
             mock_provider.assert_called_once_with('test-key', 'claude-3-sonnet-20240229')
+    
+    def test_init_bedrock_provider(self):
+        """Test initialization with Bedrock provider."""
+        config = {
+            'provider': 'bedrock',
+            'model': 'anthropic.claude-3-haiku-20240307-v1:0',
+            'region': 'us-west-2',
+            'profile': 'production'
+        }
+        
+        with patch('src.aws_cost_cli.query_processor.BedrockProvider') as mock_provider:
+            parser = QueryParser(config)
+            mock_provider.assert_called_once_with('anthropic.claude-3-haiku-20240307-v1:0', 'us-west-2', 'production')
+    
+    def test_init_bedrock_provider_defaults(self):
+        """Test initialization with Bedrock provider using defaults."""
+        config = {
+            'provider': 'bedrock'
+        }
+        
+        with patch('src.aws_cost_cli.query_processor.BedrockProvider') as mock_provider:
+            parser = QueryParser(config)
+            mock_provider.assert_called_once_with('anthropic.claude-3-haiku-20240307-v1:0', 'us-east-1', None)
     
     def test_init_ollama_provider(self):
         """Test initialization with Ollama provider."""

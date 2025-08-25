@@ -35,6 +35,11 @@ class QueryContext:
     debug: bool = False
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
+    # Performance optimization options
+    enable_parallel: bool = True
+    enable_compression: bool = True
+    max_chunk_days: int = 90
+    show_performance_metrics: bool = False
 
 
 @dataclass
@@ -48,6 +53,11 @@ class QueryResult:
     processing_time_ms: Optional[float] = None
     cache_hit: bool = False
     llm_used: bool = False
+    # Performance metrics
+    performance_metrics: Optional[Dict[str, Any]] = None
+    api_calls_made: int = 0
+    parallel_requests: int = 1
+    compression_stats: Optional[Dict[str, Any]] = None
     fallback_used: bool = False
 
 
@@ -245,12 +255,51 @@ class QueryPipeline:
             raise e
     
     def _fetch_cost_data(self, query_params: QueryParameters, context: QueryContext, result: QueryResult) -> CostData:
-        """Fetch cost data from AWS with caching."""
-        self.logger.debug("Fetching cost data")
+        """Fetch cost data from AWS with caching and performance optimizations."""
+        self.logger.debug("Fetching cost data with performance optimizations")
         
         # Check if we should use cache
         use_cache = not context.fresh_data
         
+        # Use performance optimizations if enabled
+        if context.enable_parallel or context.enable_compression:
+            try:
+                # Use performance-optimized client
+                cost_data = self.aws_client.get_cost_and_usage_with_performance_optimization(
+                    params=query_params,
+                    use_cache=use_cache,
+                    enable_parallel=context.enable_parallel,
+                    enable_compression=context.enable_compression,
+                    max_chunk_days=context.max_chunk_days
+                )
+                
+                # Get performance metrics if available
+                perf_client = self.aws_client.create_performance_optimized_client(
+                    enable_parallel=context.enable_parallel,
+                    enable_compression=context.enable_compression,
+                    enable_monitoring=True
+                )
+                
+                if hasattr(perf_client, 'monitor'):
+                    perf_summary = perf_client.get_performance_summary(hours=1)
+                    result.performance_metrics = perf_summary
+                
+                if hasattr(perf_client, 'compressed_cache'):
+                    compression_stats = perf_client.compressed_cache.get_compression_stats()
+                    result.compression_stats = compression_stats
+                
+                result.metadata["performance_optimizations_used"] = True
+                result.metadata["parallel_enabled"] = context.enable_parallel
+                result.metadata["compression_enabled"] = context.enable_compression
+                
+                self.logger.debug("Used performance-optimized data fetching")
+                return cost_data
+                
+            except Exception as e:
+                self.logger.warning(f"Performance optimization failed, falling back to standard method: {e}")
+                # Fall back to standard method
+        
+        # Standard data fetching (fallback or when optimizations disabled)
         # Check cache first if enabled
         if use_cache:
             try:
@@ -264,9 +313,16 @@ class QueryPipeline:
             except CacheError as e:
                 self.logger.warning(f"Cache error: {e.message}")
         
-        # Fetch from AWS
+        # Fetch from AWS (with advanced features if requested)
         try:
-            cost_data = self.aws_client.get_cost_and_usage(query_params, use_cache=use_cache)
+            # Check if advanced features are requested
+            if query_params.trend_analysis or query_params.include_forecast:
+                cost_data = self.aws_client.get_advanced_cost_data(query_params)
+                result.metadata["advanced_features_used"] = True
+            else:
+                cost_data = self.aws_client.get_cost_and_usage(query_params, use_cache=use_cache)
+                result.api_calls_made = 1
+            
             result.metadata["data_source"] = "aws_api"
             self.logger.debug("Fetched data from AWS API")
             return cost_data

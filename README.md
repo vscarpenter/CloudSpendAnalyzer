@@ -8,8 +8,10 @@ A Python-based command-line tool that enables natural language querying of AWS c
 - Multi-LLM provider support (OpenAI, Anthropic, Bedrock, Ollama)
 - AWS credential integration with profile support
 - Intelligent caching with TTL for performance
+- **Performance optimizations** with parallel query execution and compression
 - Rich terminal output formatting
 - Comprehensive error handling
+- Performance monitoring and metrics
 
 ## Installation
 
@@ -29,6 +31,60 @@ aws-cost-cli configure --provider openai --api-key your-api-key
 # List available AWS profiles
 aws-cost-cli list-profiles
 ```
+
+## Performance Optimizations
+
+The CLI includes several performance optimization features for handling large queries and datasets:
+
+### Parallel Query Execution
+Large time range queries are automatically split into chunks and executed in parallel:
+
+```bash
+# This query will automatically use parallel execution for the full year
+aws-cost-cli query "Show me all AWS costs for 2024" --performance-metrics
+
+# Control parallel execution
+aws-cost-cli query "EC2 costs for 2024" --parallel --max-chunk-days 60
+aws-cost-cli query "S3 costs last month" --no-parallel
+```
+
+### Cache Compression
+Reduce cache storage requirements with automatic compression:
+
+```bash
+# Enable compression (default)
+aws-cost-cli query "RDS costs this year" --compression
+
+# Disable compression
+aws-cost-cli query "Lambda costs last month" --no-compression
+```
+
+### Performance Monitoring
+Track query performance and optimization effectiveness:
+
+```bash
+# Show performance metrics after query
+aws-cost-cli query "All services last quarter" --performance-metrics
+
+# View comprehensive performance statistics
+aws-cost-cli performance
+
+# View performance for specific time period
+aws-cost-cli performance --hours 48 --format json
+```
+
+**Example performance output:**
+```
+🚀 Performance Metrics:
+   Processing time: 1250.5ms
+   API calls made: 4
+   Parallel requests: 4
+   Cache hit: No
+   Compression ratio: 0.65
+   Space saved: 35.0%
+```
+
+For detailed performance optimization guidance, see [docs/PERFORMANCE_GUIDE.md](docs/PERFORMANCE_GUIDE.md).
 
 ## LLM Provider Setup
 
@@ -58,11 +114,37 @@ aws-cost-cli list-profiles
 
 ### AWS Bedrock
 
-1. Ensure you have AWS credentials configured with Bedrock access
-2. Configure Bedrock region (optional, defaults to us-east-1):
+1. Ensure you have AWS credentials configured with Bedrock access:
    ```bash
-   aws-cost-cli configure --provider bedrock --region us-west-2
+   aws configure  # or use AWS profiles
    ```
+
+2. Verify your AWS credentials have the required permissions:
+   - `bedrock:InvokeModel`
+   - `bedrock:ListFoundationModels` (optional)
+
+3. Configure Bedrock provider:
+   ```bash
+   # Basic configuration (uses default region us-east-1)
+   aws-cost-cli configure --provider bedrock
+   
+   # With custom region and model
+   aws-cost-cli configure --provider bedrock \
+     --region us-west-2 \
+     --model anthropic.claude-3-sonnet-20240229-v1:0
+   
+   # With specific AWS profile
+   aws-cost-cli configure --provider bedrock \
+     --profile production \
+     --region us-east-1
+   ```
+
+4. Available Bedrock models:
+   - `anthropic.claude-3-haiku-20240307-v1:0` (fast, cost-effective)
+   - `anthropic.claude-3-sonnet-20240229-v1:0` (balanced performance)
+   - `anthropic.claude-3-opus-20240229-v1:0` (highest capability)
+   - `amazon.titan-text-express-v1` (Amazon's model)
+   - `ai21.j2-ultra-v1` (AI21 Labs model)
 
 ### Ollama (Local)
 

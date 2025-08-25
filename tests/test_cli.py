@@ -301,6 +301,31 @@ class TestCLI:
         assert "Model: llama2" in result.output
         mock_config_manager.return_value.save_config.assert_called_once()
     
+    @patch('src.aws_cost_cli.cli.ConfigManager')
+    def test_configure_command_bedrock(self, mock_config_manager):
+        """Test configure command for Bedrock provider."""
+        mock_config_manager.return_value.load_config.side_effect = FileNotFoundError()
+        mock_config_manager.return_value.get_default_config_path.return_value = '/test/config.yaml'
+        
+        with patch('src.aws_cost_cli.cli.QueryParser') as mock_query_parser:
+            mock_query_parser.return_value.parse_query.return_value = self.query_params
+            
+            result = self.runner.invoke(cli, [
+                'configure',
+                '--provider', 'bedrock',
+                '--model', 'anthropic.claude-3-haiku-20240307-v1:0',
+                '--region', 'us-west-2',
+                '--profile', 'production'
+            ])
+        
+        assert result.exit_code == 0
+        assert "Configuration saved successfully" in result.output
+        assert "Provider: bedrock" in result.output
+        assert "Model: anthropic.claude-3-haiku-20240307-v1:0" in result.output
+        assert "Region: us-west-2" in result.output
+        assert "AWS Profile: production" in result.output
+        mock_config_manager.return_value.save_config.assert_called_once()
+    
     @patch('src.aws_cost_cli.cli.CredentialManager')
     def test_list_profiles_command(self, mock_credential_manager):
         """Test list-profiles command."""
