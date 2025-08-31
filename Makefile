@@ -28,7 +28,7 @@ lint: ## Run formatters and linters (pre-commit or fallback)
 	  echo "pre-commit not found; running black/isort/flake8 fallback"; \
 	  (command -v black >/dev/null 2>&1 && black .) || true; \
 	  (command -v isort >/dev/null 2>&1 && isort --profile=black .) || true; \
-	  (command -v flake8 >/dev/null 2>&1 && flake8) || true; \
+	  (command -v flake8 >/dev/null 2>&1 && flake8 src/ tests/) || true; \
 	fi
 
 test: ## Run tests quickly
