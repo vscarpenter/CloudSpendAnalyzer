@@ -36,6 +36,8 @@ setup(
         "openai>=1.0.0",
         "anthropic>=0.7.0",
         "requests>=2.28.0",
+        "psutil>=5.9.0",
+        "openpyxl>=3.0.0",
     ],
     extras_require={
         "dev": [
@@ -44,6 +46,8 @@ setup(
             "black>=22.0.0",
             "flake8>=5.0.0",
             "mypy>=1.0.0",
+            "types-PyYAML>=6.0.0",
+            "types-requests>=2.28.0",
         ],
     },
     entry_points={

@@ -1,0 +1,39 @@
+[flake8]
+max-line-length = 88
+select = E,W,F
+ignore = E203,W503,E501,F841,F401
+exclude = 
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    .env,
+    env,
+    ENV,
+    env.bak,
+    venv.bak,
+    .tox,
+    .nox,
+    .pytest_cache,
+    .mypy_cache,
+    .ruff_cache,
+    build,
+    dist,
+    *.egg-info,
+    .eggs,
+    lib,
+    lib64,
+    parts,
+    sdist,
+    var,
+    wheels,
+    .coverage,
+    htmlcov,
+    .idea,
+    .vscode,
+    node_modules
+per-file-ignores =
+    # Allow unused imports in __init__.py files
+    __init__.py:F401
+    # Allow long lines in setup.py
+    setup.py:E501

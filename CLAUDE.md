@@ -8,13 +8,14 @@ AWS Cost Explorer CLI is a comprehensive Python command-line tool that enables n
 
 ## Common Commands
 
-### Development Setup
+### Development Setup (uv)
 ```bash
-# Install in development mode
-pip install -e .
+# Create and activate virtualenv
+uv venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-# Install with development dependencies
-pip install -e .[dev]
+# Install in development mode with extras
+uv pip install -e .[dev]
 ```
 
 ### Testing
@@ -47,7 +48,7 @@ mypy src/
 python setup.py sdist bdist_wheel
 
 # Install from source
-pip install .
+uv pip install .
 ```
 
 ## Architecture Overview
