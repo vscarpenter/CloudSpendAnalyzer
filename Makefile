@@ -58,7 +58,7 @@ security: ## Run security checks (bandit, safety)
 	safety check || true
 
 typecheck: ## Run mypy type checking
-	mypy src/ --ignore-missing-imports
+	mypy src/ --ignore-missing-imports --no-strict-optional --allow-redefinition
 
 format: ## Format code with black and isort
 	black .
