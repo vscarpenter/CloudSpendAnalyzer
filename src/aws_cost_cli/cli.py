@@ -11,27 +11,22 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 from rich.prompt import Confirm, Prompt
+from rich.table import Table
 
 from .config import ConfigManager
 from .query_processor import QueryParser
 from .aws_client import AWSCostClient, CredentialManager
 from .cache_manager import CacheManager
-from .response_formatter import ResponseGenerator
-from .query_pipeline import QueryPipeline, QueryContext, QueryResult
+from .query_pipeline import QueryPipeline, QueryContext
 from .models import Config
 from .data_exporter import ExportManager
 from .interactive_query_builder import InteractiveQueryBuilder
 from .exceptions import (
-    AWSCostCLIError,
     AWSCredentialsError,
     AWSPermissionsError,
     AWSAPIError,
     NetworkError,
     QueryParsingError,
-    LLMProviderError,
-    CacheError,
-    ConfigurationError,
-    ValidationError,
     format_error_message,
 )
 from .health import HealthChecker, create_health_check_server
@@ -765,7 +760,7 @@ def configure(
 
         console.print(
             Panel(
-                Text(f"✅ Configuration saved successfully", style="bold green"),
+                Text("✅ Configuration saved successfully", style="bold green"),
                 title="Configuration Updated",
                 border_style="green",
             )
@@ -787,7 +782,7 @@ def configure(
 
         try:
             query_parser = QueryParser(config.llm_config)
-            test_result = query_parser.parse_query("test query for configuration")
+            _test_result = query_parser.parse_query("test query for configuration")
             console.print("✅ LLM provider configuration is working")
         except Exception as e:
             console.print(f"⚠️  Configuration test failed: {e}")
@@ -1162,7 +1157,7 @@ def performance(hours: int, output_format: str):
             else:
                 console.print("   No performance data available")
 
-            console.print(f"\n💾 Cache Statistics")
+            console.print("\n💾 Cache Statistics")
             console.print(f"   Total entries: {cache_stats.get('total_entries', 0)}")
             console.print(f"   Valid entries: {cache_stats.get('valid_entries', 0)}")
             console.print(
@@ -1172,7 +1167,7 @@ def performance(hours: int, output_format: str):
                 f"   Cache size: {cache_stats.get('cache_size_bytes', 0) / 1024 / 1024:.1f} MB"
             )
 
-            console.print(f"\n🗜️  Compression Statistics")
+            console.print("\n🗜️  Compression Statistics")
             console.print(
                 f"   Compressed files: {compression_stats.get('compressed_files', 0)}"
             )
@@ -1311,7 +1306,7 @@ def export(
 
         console.print(
             Panel(
-                Text(f"✅ Data exported successfully", style="bold green"),
+                Text("✅ Data exported successfully", style="bold green"),
                 title="Export Complete",
                 border_style="green",
             )
@@ -1334,7 +1329,7 @@ def export(
             else:
                 size_str = f"{file_size / (1024 * 1024):.1f} MB"
             console.print(f"📏 File Size: {size_str}")
-        except:
+        except Exception:
             pass
 
     except KeyboardInterrupt:
@@ -1352,120 +1347,6 @@ def export(
             import traceback
 
             console.print(traceback.format_exc())
-        sys.exit(1)
-
-
-@cli.command()
-@click.argument("query", required=True)
-@click.option(
-    "--recipients", "-r", required=True, help="Comma-separated list of email recipients"
-)
-@click.option(
-    "--format",
-    "export_format",
-    type=click.Choice(["csv", "json", "excel"], case_sensitive=False),
-    default="csv",
-    help="Export format for attachment (default: csv)",
-)
-@click.option("--profile", "-p", help="AWS profile to use")
-@click.option(
-    "--fresh", "-f", is_flag=True, help="Force fresh data retrieval, bypassing cache"
-)
-@click.option(
-    "--config-file",
-    "-c",
-    type=click.Path(exists=True),
-    help="Path to configuration file",
-)
-@click.pass_context
-def email_report(
-    ctx,
-    query: str,
-    recipients: str,
-    export_format: str,
-    profile: Optional[str],
-    fresh: bool,
-    config_file: Optional[str],
-):
-    """Email cost report to recipients.
-
-    Examples:
-        aws-cost-cli email-report "Monthly EC2 costs" --recipients admin@company.com
-        aws-cost-cli email-report "Q1 spending summary" --recipients team@company.com,cfo@company.com --format excel
-    """
-    try:
-        # Create query context
-        context = QueryContext(
-            original_query=query,
-            profile=profile,
-            fresh_data=fresh,
-            output_format="json",
-            debug=ctx.obj.get("debug", False),
-        )
-
-        # Initialize pipeline
-        pipeline = QueryPipeline(config_path=config_file)
-
-        # Process query
-        console.print(f"🔍 Processing query: '{query}'")
-        result = pipeline.process_query(context)
-
-        if not result.success:
-            console.print(
-                Panel(
-                    Text(result.error.message, style="bold red"),
-                    title="Query Error",
-                    border_style="red",
-                )
-            )
-            sys.exit(1)
-
-        # Generate report file
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        service_part = (
-            f"_{result.query_params.service.lower()}"
-            if result.query_params.service
-            else ""
-        )
-        report_file = (
-            f"aws_cost_report{service_part}_{timestamp}.{export_format.lower()}"
-        )
-
-        export_manager = ExportManager()
-        exported_path = export_manager.export_data(
-            result.cost_data, result.query_params, export_format.lower(), report_file
-        )
-
-        # Send email
-        console.print(f"📧 Sending email report to: {recipients}")
-
-        # Parse recipients
-        recipient_list = [email.strip() for email in recipients.split(",")]
-
-        # Email the report (this would require email configuration)
-        console.print(
-            Panel(
-                Text(
-                    "✅ Email report functionality requires email configuration",
-                    style="bold yellow",
-                ),
-                title="Email Report",
-                border_style="yellow",
-            )
-        )
-
-        console.print(f"📁 Report file generated: {exported_path}")
-        console.print(f"👥 Recipients: {', '.join(recipient_list)}")
-        console.print("💡 Configure email settings to enable automatic sending")
-
-    except Exception as e:
-        console.print(
-            Panel(
-                Text(f"❌ Email report failed: {str(e)}", style="bold red"),
-                title="Email Error",
-                border_style="red",
-            )
-        )
         sys.exit(1)
 
 
@@ -1518,7 +1399,7 @@ def optimize(
         if not credential_manager.validate_credentials(profile):
             raise AWSCredentialsError(profile=profile)
 
-        console.print(f"🔍 Analyzing AWS costs for optimization opportunities...")
+        console.print("🔍 Analyzing AWS costs for optimization opportunities...")
         console.print(f"📅 Analysis period: Last {days} days")
         if profile:
             console.print(f"👤 AWS Profile: {profile}")
@@ -1733,7 +1614,7 @@ def detect_anomalies(
         if not credential_manager.validate_credentials(profile):
             raise AWSCredentialsError(profile=profile)
 
-        console.print(f"🔍 Detecting cost anomalies...")
+        console.print("🔍 Detecting cost anomalies...")
         console.print(f"📅 Analysis period: Last {days} days")
         console.print(f"📊 Variance threshold: {threshold}%")
         if service:
@@ -1895,12 +1776,12 @@ def email_report(
     config_file: Optional[str],
 ):
     """Send cost report via email.
-    
+
     Examples:
         aws-cost-cli email-report "EC2 costs last month" \\
             --recipients "admin@company.com,finance@company.com" \\
             --smtp-host smtp.gmail.com --smtp-username user@gmail.com --smtp-password password
-        
+
         aws-cost-cli email-report "Monthly AWS costs" \\
             --recipients "team@company.com" --subject "Monthly Cost Report" \\
             --attachments csv --attachments excel \\
@@ -2086,7 +1967,7 @@ def test(ctx, debug: bool):
     try:
         query_parser = QueryParser(config.llm_config)
         # Try a simple test query
-        test_result = query_parser.parse_query("test")
+        _test_result = query_parser.parse_query("test")
         console.print("   ✅ LLM provider is working")
     except Exception as e:
         console.print(f"   ⚠️  LLM provider error: {e}")
@@ -2275,7 +2156,6 @@ def serve_health_checks(host: str, port: int, config_file: Optional[str]):
 def _display_health_status(health_status):
     """Display health status in a user-friendly format."""
     from rich.table import Table
-    from rich.console import Console
 
     # Overall status
     status_color = {"healthy": "green", "degraded": "yellow", "unhealthy": "red"}

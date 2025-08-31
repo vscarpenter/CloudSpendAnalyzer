@@ -138,7 +138,7 @@ class CacheManager:
             # Reconstruct CostData from cached JSON
             return self._deserialize_cost_data(cache_data["data"])
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except (json.JSONDecodeError, KeyError) as _e:
             # If cache file is corrupted, remove it
             try:
                 cache_file.unlink()
@@ -181,7 +181,7 @@ class CacheManager:
             # Reconstruct CostData from cached JSON
             return self._deserialize_cost_data(cache_data["data"])
 
-        except (json.JSONDecodeError, KeyError, OSError) as e:
+        except (json.JSONDecodeError, KeyError, OSError) as _e:
             # If cache file is corrupted, remove it
             try:
                 cache_file.unlink()
@@ -221,8 +221,8 @@ class CacheManager:
 
             return True
 
-        except (OSError, TypeError, ValueError) as e:
-            raise CacheError(f"Failed to write cache file: {e}")
+        except (OSError, TypeError, ValueError) as _e:
+            raise CacheError(f"Failed to write cache file: {_e}")
 
     def cache_data_by_params(
         self,
@@ -262,7 +262,7 @@ class CacheManager:
 
             return True
 
-        except (OSError, TypeError, ValueError) as e:
+        except (OSError, TypeError, ValueError) as _e:
             return False
 
     def invalidate_cache(self, pattern: Optional[str] = None) -> int:

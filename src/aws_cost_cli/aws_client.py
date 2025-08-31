@@ -2,7 +2,6 @@
 
 import boto3
 import time
-import random
 from botocore.exceptions import (
     ClientError,
     NoCredentialsError,
@@ -26,13 +25,10 @@ from .models import (
     TimePeriodGranularity,
     MetricType,
     TrendAnalysisType,
-    DateRangeType,
 )
 from .exceptions import (
     AWSCredentialsError,
-    AWSPermissionsError,
     AWSAPIError,
-    NetworkError,
     CacheError,
     handle_aws_client_error,
     handle_network_error,
@@ -432,7 +428,7 @@ class AWSCostClient:
             start_date = end_date - timedelta(days=1)
 
             start_time = time.time()
-            response = self.client.get_cost_and_usage(
+            _response = self.client.get_cost_and_usage(
                 TimePeriod={
                     "Start": start_date.strftime("%Y-%m-%d"),
                     "End": end_date.strftime("%Y-%m-%d"),

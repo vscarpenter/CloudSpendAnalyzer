@@ -300,7 +300,7 @@ class HealthChecker:
 
             start_time = time.time()
             test_file.write_text(json.dumps(test_data))
-            read_data = json.loads(test_file.read_text())
+            _read_data = json.loads(test_file.read_text())
             test_file.unlink()
             operation_time = time.time() - start_time
 

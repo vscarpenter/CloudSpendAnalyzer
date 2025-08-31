@@ -61,7 +61,7 @@ class LLMResponseFormatter(ResponseFormatter):
 
             return response
 
-        except Exception as e:
+        except Exception as _e:
             # Fall back to simple formatter on any error
             return self.fallback_formatter.format_response(
                 cost_data, original_query, query_params
@@ -551,7 +551,7 @@ class RichResponseFormatter(ResponseFormatter):
 
             return string_io.getvalue()
 
-        except Exception as e:
+        except Exception as _e:
             # Fall back to simple formatter on any error
             return self.fallback_formatter.format_response(
                 cost_data, original_query, query_params
@@ -667,7 +667,7 @@ class RichResponseFormatter(ResponseFormatter):
             table.add_column("Confidence", justify="center")
 
             for i, forecast in enumerate(forecast_data[:3], 1):  # Show first 3 months
-                period = self._format_time_period(forecast.forecast_period)
+                _period = self._format_time_period(forecast.forecast_period)
                 forecasted = self._format_currency(forecast.forecasted_amount)
                 lower = self._format_currency(forecast.confidence_interval_lower)
                 upper = self._format_currency(forecast.confidence_interval_upper)
@@ -822,7 +822,7 @@ class ResponseGenerator:
                     cost_data, original_query, query_params
                 )
 
-        except Exception as e:
+        except Exception as _e:
             # Always fall back to simple formatter on any error
             return self.simple_formatter.format_response(
                 cost_data, original_query, query_params

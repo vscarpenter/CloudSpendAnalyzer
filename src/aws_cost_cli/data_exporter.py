@@ -5,17 +5,24 @@ import json
 import smtplib
 from abc import ABC, abstractmethod
 from datetime import datetime
-from decimal import Decimal
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-from pathlib import Path
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List
 import tempfile
 import os
 
-from .models import CostData, CostResult, CostAmount, QueryParameters
+# Excel-specific imports (will be used when available)
+try:
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.chart import LineChart, Reference
+    from openpyxl.utils import get_column_letter
+    EXCEL_AVAILABLE = True
+except ImportError:
+    EXCEL_AVAILABLE = False
+
+from .models import CostData, QueryParameters
 
 
 class DataExporter(ABC):
@@ -295,10 +302,6 @@ class ExcelExporter(DataExporter):
         self, cost_data: CostData, query_params: QueryParameters, output_path: str
     ) -> str:
         """Export cost data to Excel format with charts and formatting."""
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-        from openpyxl.chart import LineChart, Reference
-        from openpyxl.utils import get_column_letter
-
         # Create workbook and worksheets
         wb = self.openpyxl.Workbook()
 
@@ -426,7 +429,7 @@ class ExcelExporter(DataExporter):
                 try:
                     if len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
-                except:
+                except Exception:
                     pass
             adjusted_width = min(max_length + 2, 50)
             ws.column_dimensions[column_letter].width = adjusted_width
@@ -492,7 +495,7 @@ class ExcelExporter(DataExporter):
                 try:
                     if len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
-                except:
+                except Exception:
                     pass
             adjusted_width = min(max_length + 2, 50)
             ws.column_dimensions[column_letter].width = adjusted_width
@@ -500,8 +503,6 @@ class ExcelExporter(DataExporter):
     def _add_cost_chart(self, ws, cost_data):
         """Add a cost trend chart to the summary sheet."""
         try:
-            from openpyxl.chart import LineChart, Reference
-
             # Create chart data in the worksheet
             chart_start_row = 20
             ws[f"A{chart_start_row}"] = "Period"
@@ -630,7 +631,7 @@ class EmailReporter:
                 for attachment_path, _ in attachments:
                     try:
                         os.unlink(attachment_path)
-                    except:
+                    except Exception:
                         pass
 
             return True
@@ -668,7 +669,7 @@ class EmailReporter:
                 <p><strong>Period:</strong> {period_text}</p>
                 <p><strong>Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
             </div>
-            
+
             <div class="cost-summary">
                 Total Cost: ${cost_data.total_cost.amount:,.2f} {cost_data.total_cost.unit}
             </div>

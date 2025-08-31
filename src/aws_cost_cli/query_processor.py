@@ -4,8 +4,7 @@ import json
 import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional, List, Union
-from dataclasses import asdict
+from typing import Dict, Any, Optional, List
 
 from .models import QueryParameters, TimePeriod, TimePeriodGranularity, MetricType
 from .exceptions import (
@@ -13,6 +12,7 @@ from .exceptions import (
     QueryParsingError,
     NetworkError,
     ValidationError,
+    ParameterValidationError,
 )
 
 
@@ -59,7 +59,7 @@ class OpenAIProvider(LLMProvider):
     def is_available(self) -> bool:
         """Check if OpenAI is available and configured."""
         try:
-            client = self._get_client()
+            _client = self._get_client()
             return bool(self.api_key)
         except ImportError:
             return False
@@ -109,7 +109,7 @@ IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relati
 Extract these parameters from the user query:
 - service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
 - start_date: Start date in YYYY-MM-DD format or null
-- end_date: End date in YYYY-MM-DD format or null  
+- end_date: End date in YYYY-MM-DD format or null
 - granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
 - metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
 - group_by: Array of grouping dimensions like ["SERVICE"] or null
@@ -173,7 +173,7 @@ IMPORTANT: For queries asking about service breakdown or listing services, set g
 Return only valid JSON in this format:
 {
   "service": null,
-  "start_date": "2025-07-01", 
+  "start_date": "2025-07-01",
   "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
@@ -232,7 +232,7 @@ class AnthropicProvider(LLMProvider):
     def is_available(self) -> bool:
         """Check if Anthropic is available and configured."""
         try:
-            client = self._get_client()
+            _client = self._get_client()
             return bool(self.api_key)
         except ImportError:
             return False
@@ -286,7 +286,7 @@ IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relati
 Extract these parameters from the user query:
 - service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
 - start_date: Start date in YYYY-MM-DD format or null
-- end_date: End date in YYYY-MM-DD format or null  
+- end_date: End date in YYYY-MM-DD format or null
 - granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
 - metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
 - group_by: Array of grouping dimensions like ["SERVICE"] or null
@@ -351,7 +351,7 @@ For queries asking about service breakdown, set group_by to ["SERVICE"].
 Return only valid JSON in this format:
 {
   "service": null,
-  "start_date": "2025-07-01", 
+  "start_date": "2025-07-01",
   "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
@@ -422,7 +422,7 @@ class BedrockProvider(LLMProvider):
     def is_available(self) -> bool:
         """Check if Bedrock is available and configured."""
         try:
-            client = self._get_client()
+            _client = self._get_client()
             # Try a simple operation to verify credentials and permissions
             # We'll just check if we can create the client without errors
             return True
@@ -545,7 +545,7 @@ IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relati
 Extract these parameters from the user query:
 - service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
 - start_date: Start date in YYYY-MM-DD format or null
-- end_date: End date in YYYY-MM-DD format or null  
+- end_date: End date in YYYY-MM-DD format or null
 - granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
 - metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
 - group_by: Array of grouping dimensions like ["SERVICE"] or null
@@ -610,7 +610,7 @@ For queries asking about service breakdown, set group_by to ["SERVICE"].
 Return only valid JSON in this format:
 {
   "service": null,
-  "start_date": "2025-07-01", 
+  "start_date": "2025-07-01",
   "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
@@ -715,7 +715,7 @@ IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relati
 Extract these parameters from the user query:
 - service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
 - start_date: Start date in YYYY-MM-DD format or null
-- end_date: End date in YYYY-MM-DD format or null  
+- end_date: End date in YYYY-MM-DD format or null
 - granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
 - metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
 - group_by: Array of grouping dimensions like ["SERVICE"] or null
@@ -780,7 +780,7 @@ For queries asking about service breakdown, set group_by to ["SERVICE"].
 Return only valid JSON in this format:
 {
   "service": null,
-  "start_date": "2025-07-01", 
+  "start_date": "2025-07-01",
   "end_date": "2025-08-01",
   "granularity": "MONTHLY",
   "metrics": ["BlendedCost"],
@@ -1285,21 +1285,21 @@ class QueryParser:
             # Check time period validity
             if params.time_period:
                 if params.time_period.start >= params.time_period.end:
-                    raise ValidationError(
+                    raise ParameterValidationError(
                         "Start date must be before end date", field="time_period"
                     )
 
                 # Check if dates are too far in the future
                 now = datetime.now(timezone.utc)
                 if params.time_period.start > now:
-                    raise ValidationError(
+                    raise ParameterValidationError(
                         "Start date cannot be in the future", field="start_date"
                     )
 
                 # Check if date range is reasonable (not more than 5 years)
                 max_range = timedelta(days=5 * 365)
                 if (params.time_period.end - params.time_period.start) > max_range:
-                    raise ValidationError(
+                    raise ParameterValidationError(
                         "Date range cannot exceed 5 years", field="time_period"
                     )
 
@@ -1311,14 +1311,14 @@ class QueryParser:
 
             valid_granularities = [g.value for g in TimePeriodGranularity]
             if granularity_value not in valid_granularities:
-                raise ValidationError(
+                raise ParameterValidationError(
                     f"Invalid granularity '{granularity_value}'. Must be one of: {', '.join(valid_granularities)}",
                     field="granularity",
                 )
 
             # Check metrics
             if not params.metrics:
-                raise ValidationError(
+                raise ParameterValidationError(
                     "At least one metric must be specified", field="metrics"
                 )
 
@@ -1326,7 +1326,7 @@ class QueryParser:
             for metric in params.metrics:
                 metric_value = metric.value if hasattr(metric, "value") else metric
                 if metric_value not in valid_metrics:
-                    raise ValidationError(
+                    raise ParameterValidationError(
                         f"Invalid metric '{metric_value}'. Must be one of: {', '.join(valid_metrics)}",
                         field="metrics",
                     )
@@ -1343,14 +1343,14 @@ class QueryParser:
                 ]
                 for dimension in params.group_by:
                     if dimension not in valid_dimensions:
-                        raise ValidationError(
+                        raise ParameterValidationError(
                             f"Invalid group_by dimension '{dimension}'. Must be one of: {', '.join(valid_dimensions)}",
                             field="group_by",
                         )
 
             return True
 
-        except ValidationError:
+        except (ValidationError, ParameterValidationError):
             # Re-raise validation errors
             raise
         except Exception as e:

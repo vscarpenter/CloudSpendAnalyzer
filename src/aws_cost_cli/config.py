@@ -4,7 +4,7 @@ import os
 import yaml
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional
 from dataclasses import asdict
 
 from .models import Config

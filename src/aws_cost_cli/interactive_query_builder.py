@@ -768,7 +768,7 @@ class InteractiveQueryBuilder:
                 )
             )
 
-            favorites = self.history_manager.get_favorites()
+            _favorites = self.history_manager.get_favorites()
 
             self.console.print("\n📋 What would you like to do?")
             self.console.print("1. View favorites")

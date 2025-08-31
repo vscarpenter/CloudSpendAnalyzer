@@ -551,7 +551,7 @@ class CompressedCacheManager:
             with open(cache_file, "rb") as f:
                 # Read metadata line
                 metadata_line = f.readline().decode("utf-8").strip()
-                metadata = json.loads(metadata_line)
+                _metadata = json.loads(metadata_line)
 
                 # Read compressed data
                 compressed_data = f.read()
@@ -689,7 +689,7 @@ class PerformanceOptimizedClient:
 
         # Start monitoring
         if self.enable_monitoring:
-            metrics = self.monitor.start_query(query_id)
+            _metrics = self.monitor.start_query(query_id)
 
         try:
             # Check if query should be parallelized

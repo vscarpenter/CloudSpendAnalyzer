@@ -1,6 +1,6 @@
 """Custom exceptions and error handling for AWS Cost CLI."""
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 
 
 class AWSCostCLIError(Exception):
@@ -246,11 +246,11 @@ class ConfigurationError(AWSCostCLIError):
         super().__init__(message, "CONFIGURATION_ERROR", suggestions)
 
 
-class ValidationError(AWSCostCLIError):
-    """Exception raised when input validation fails."""
+class ParameterValidationError(AWSCostCLIError):
+    """Exception raised when parameter validation fails."""
 
     def __init__(
-        self, message: str = "Input validation failed", field: Optional[str] = None
+        self, message: str = "Parameter validation failed", field: Optional[str] = None
     ):
         self.field = field
 

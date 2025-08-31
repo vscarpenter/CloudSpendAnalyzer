@@ -3,12 +3,11 @@
 import boto3
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 
-from .models import CostData, CostAmount, TimePeriod, QueryParameters, MetricType
-from .exceptions import AWSAPIError, handle_aws_client_error
+from .models import CostAmount, TimePeriod
 
 
 class OptimizationType(Enum):
@@ -234,7 +233,7 @@ class CostOptimizer:
                     )
                 )
 
-        except Exception as e:
+        except Exception as _e:
             # Log error but don't fail the entire analysis
             pass
 
@@ -298,7 +297,7 @@ class CostOptimizer:
                             )
                         )
 
-        except Exception as e:
+        except Exception as _e:
             # Rightsizing API might not be available in all regions
             pass
 
@@ -354,7 +353,7 @@ class CostOptimizer:
                     )
                 )
 
-        except Exception as e:
+        except Exception as _e:
             # RI recommendations might not be available
             pass
 
@@ -401,7 +400,7 @@ class CostOptimizer:
                     )
                 )
 
-        except Exception as e:
+        except Exception as _e:
             # Savings Plans recommendations might not be available
             pass
 
@@ -447,7 +446,7 @@ class CostOptimizer:
                         )
                     )
 
-        except Exception as e:
+        except Exception as _e:
             # Cost Anomaly Detection might not be enabled
             pass
 
@@ -492,7 +491,7 @@ class CostOptimizer:
                         )
                     )
 
-        except Exception as e:
+        except Exception as _e:
             # Budgets might not be configured
             pass
 
