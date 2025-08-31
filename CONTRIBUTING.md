@@ -19,16 +19,15 @@ Thank you for your interest in contributing to the AWS Cost Explorer CLI! This d
    cd aws-cost-explorer-cli
    ```
 
-2. **Create a virtual environment:**
+2. **Create a virtual environment (uv):**
    ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   uv venv
+   source .venv/bin/activate  # Windows: .venv\Scripts\activate
    ```
 
-3. **Install development dependencies:**
+3. **Install development dependencies (uv):**
    ```bash
-   pip install -e .
-   pip install -r requirements-dev.txt
+   uv pip install -e .[dev]
    ```
 
 4. **Run tests to verify setup:**

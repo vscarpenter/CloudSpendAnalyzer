@@ -9,6 +9,7 @@ from enum import Enum
 
 class TimePeriodGranularity(Enum):
     """Time period granularity options."""
+
     DAILY = "DAILY"
     MONTHLY = "MONTHLY"
     HOURLY = "HOURLY"
@@ -16,6 +17,7 @@ class TimePeriodGranularity(Enum):
 
 class DateRangeType(Enum):
     """Types of date ranges for advanced queries."""
+
     QUARTER = "QUARTER"
     FISCAL_YEAR = "FISCAL_YEAR"
     CALENDAR_YEAR = "CALENDAR_YEAR"
@@ -24,6 +26,7 @@ class DateRangeType(Enum):
 
 class TrendAnalysisType(Enum):
     """Types of trend analysis."""
+
     PERIOD_OVER_PERIOD = "PERIOD_OVER_PERIOD"
     YEAR_OVER_YEAR = "YEAR_OVER_YEAR"
     MONTH_OVER_MONTH = "MONTH_OVER_MONTH"
@@ -32,6 +35,7 @@ class TrendAnalysisType(Enum):
 
 class MetricType(Enum):
     """Cost metric types."""
+
     BLENDED_COST = "BlendedCost"
     UNBLENDED_COST = "UnblendedCost"
     NET_UNBLENDED_COST = "NetUnblendedCost"
@@ -41,6 +45,7 @@ class MetricType(Enum):
 @dataclass
 class TimePeriod:
     """Represents a time period for cost queries."""
+
     start: datetime
     end: datetime
 
@@ -48,6 +53,7 @@ class TimePeriod:
 @dataclass
 class QueryParameters:
     """Parameters extracted from natural language queries."""
+
     service: Optional[str] = None
     time_period: Optional[TimePeriod] = None
     granularity: TimePeriodGranularity = TimePeriodGranularity.MONTHLY
@@ -61,7 +67,7 @@ class QueryParameters:
     include_forecast: bool = False
     forecast_months: int = 3
     cost_allocation_tags: Optional[List[str]] = None
-    
+
     def __post_init__(self):
         if self.metrics is None:
             self.metrics = [MetricType.BLENDED_COST]
@@ -70,6 +76,7 @@ class QueryParameters:
 @dataclass
 class CostAmount:
     """Represents a cost amount with currency."""
+
     amount: Decimal
     unit: str = "USD"
 
@@ -77,6 +84,7 @@ class CostAmount:
 @dataclass
 class Group:
     """Represents a grouped cost result."""
+
     keys: List[str]
     metrics: Dict[str, CostAmount]
 
@@ -84,6 +92,7 @@ class Group:
 @dataclass
 class CostResult:
     """Individual cost result for a time period."""
+
     time_period: TimePeriod
     total: CostAmount
     groups: List[Group]
@@ -93,6 +102,7 @@ class CostResult:
 @dataclass
 class TrendData:
     """Trend analysis data for period-over-period comparisons."""
+
     current_period: CostAmount
     comparison_period: CostAmount
     change_amount: CostAmount
@@ -103,6 +113,7 @@ class TrendData:
 @dataclass
 class ForecastData:
     """Cost forecast data."""
+
     forecasted_amount: CostAmount
     confidence_interval_lower: CostAmount
     confidence_interval_upper: CostAmount
@@ -113,6 +124,7 @@ class ForecastData:
 @dataclass
 class CostData:
     """Complete cost data response."""
+
     results: List[CostResult]
     time_period: TimePeriod
     total_cost: CostAmount
@@ -121,7 +133,7 @@ class CostData:
     # Advanced features
     trend_data: Optional[TrendData] = None
     forecast_data: Optional[List[ForecastData]] = None
-    
+
     def __post_init__(self):
         if self.group_definitions is None:
             self.group_definitions = []
@@ -130,13 +142,14 @@ class CostData:
 @dataclass
 class Config:
     """Application configuration."""
+
     llm_provider: str = "openai"
     llm_config: Dict[str, Any] = None
     default_profile: Optional[str] = None
     cache_ttl: int = 3600  # 1 hour in seconds
     output_format: str = "simple"
     default_currency: str = "USD"
-    
+
     def __post_init__(self):
         if self.llm_config is None:
             self.llm_config = {}

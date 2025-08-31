@@ -48,10 +48,10 @@ For basic usage and development:
 
 ```bash
 # Install the package with core dependencies
-pip install -e .
+uv pip install -e .
 
 # Or install with development tools
-pip install -e .[dev]
+uv pip install -e .[dev]
 ```
 
 ### Production Installation
@@ -60,10 +60,10 @@ For production deployments, use the production-optimized dependencies:
 
 ```bash
 # Install production dependencies for better performance
-pip install -r requirements-prod.txt
+uv pip install -r requirements-prod.txt
 
 # Then install the main package
-pip install -e .
+uv pip install -e .
 ```
 
 **Production dependencies include:**

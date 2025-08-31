@@ -109,6 +109,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.direnv/
+.envrc
 
 # Spyder project settings
 .spyderproject
@@ -124,6 +126,9 @@ venv.bak/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Ruff (Python linter) cache
+.ruff_cache/
 
 # Pyre type checker
 .pyre/
@@ -183,6 +188,8 @@ bedrock_credentials
 # IDE specific files
 .vscode/
 .idea/
+*.iml
+*.code-workspace
 *.swp
 *.swo
 *~
@@ -205,6 +212,9 @@ Desktop.ini
 logs/
 debug.log
 error.log
+
+# Benchmarks
+.benchmarks/
 
 # Temporary files
 tmp/

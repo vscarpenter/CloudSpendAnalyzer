@@ -16,7 +16,7 @@ A Python-based command-line tool that enables natural language querying of AWS c
 ## Installation
 
 ```bash
-pip install aws-cost-explorer-cli
+uv pip install aws-cost-explorer-cli
 ```
 
 ## Quick Start
@@ -298,11 +298,15 @@ aws-cost-cli test
   - AWS Bedrock access
   - Ollama running locally
 
-## Development
+## Development (uv)
 
 ```bash
-# Install in development mode
-pip install -e .
+# Create and activate virtualenv
+uv venv
+source .venv/bin/activate
+
+# Install in development mode with extras
+uv pip install -e .[dev]
 
 # Run tests
 pytest tests/
