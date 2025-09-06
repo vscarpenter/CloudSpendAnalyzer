@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AWS Cost Explorer CLI is a comprehensive Python command-line tool that enables natural language querying of AWS cost and billing data. The application integrates with multiple LLM providers (OpenAI, Anthropic, Bedrock, Ollama) to parse user queries, analyze trends, provide optimization recommendations, and format responses naturally. It includes advanced features like data export, interactive query building, cost optimization analysis, and performance monitoring.
+AWS Cost Explorer CLI is a comprehensive Python command-line tool that enables natural language querying of AWS cost and billing data. The application integrates with multiple LLM providers (OpenAI, Anthropic, Bedrock, Ollama, Gemini) to parse user queries, analyze trends, provide optimization recommendations, and format responses naturally. It includes advanced features like data export, interactive query building, cost optimization analysis, performance monitoring, health checks, and intelligent date formatting.
 
 ## Common Commands
 
@@ -76,11 +76,12 @@ The application follows a modular architecture with clear separation of concerns
 
 - **`query_processor.py`**: LLM integration for natural language processing
   - Abstract `LLMProvider` base class
-  - Provider implementations: `OpenAIProvider`, `AnthropicProvider`, `BedrockProvider`, `OllamaProvider`
+  - Provider implementations: `OpenAIProvider`, `AnthropicProvider`, `BedrockProvider`, `OllamaProvider`, `GeminiProvider`
   - Parses natural language queries into structured `QueryParameters`
   - Enhanced year parsing for full year queries (e.g., "S3 costs for 2025")
   - Consistent date parsing across all LLM providers with fallback parser support
   - Comprehensive system prompts with trend analysis and forecasting capabilities
+  - Provider performance monitoring and health checks with failover support
 
 - **`cache_manager.py`**: File-based caching system with TTL
   - Hash-based cache keys from query parameters
@@ -134,19 +135,49 @@ The application follows a modular architecture with clear separation of concerns
 ### Supporting Components
 
 - **`cli.py`**: Main CLI interface with click framework integration
-  - Command groups for query, export, optimization, and interactive modes
-  - Rich terminal output formatting
+  - Command groups for query, export, optimization, interactive, and health modes
+  - Rich terminal output formatting with comprehensive progress indicators
+  - Multi-provider switching support with `--llm-provider` option
+  - Performance monitoring options (`--performance-metrics`, `--parallel`)
   - Comprehensive error handling and user feedback
 
 - **`exceptions.py`**: Centralized exception handling
   - Custom exception types for different error categories
   - Error message formatting and user-friendly output
   - Logging integration for debugging
+  - LLM provider-specific error handling
 
 - **`date_utils.py`**: Date parsing and manipulation utilities
   - Natural language date parsing
   - Business calendar support
   - Time zone handling
+
+- **`date_formatter.py`**: Intelligent date formatting system (NEW)
+  - `PeriodTypeDetector`: Automatically detects period types (single day/month/quarter/year, multi-month, custom range)
+  - `FormatRules`: Template-based formatting with multiple styles (smart, verbose, compact)
+  - `DateFormatter`: Main formatter with comprehensive error handling and fallback strategies
+  - Fiscal year support and configurable formatting options
+  - Safe formatting methods that never throw exceptions
+
+- **`provider_factory.py`**: LLM provider factory and management (NEW)
+  - `ProviderFactory`: Creates and manages LLM provider instances
+  - Support for all providers: OpenAI, Anthropic, Bedrock, Ollama, Gemini
+  - Provider configuration validation and status checking
+  - Unified provider creation with consistent error handling
+
+- **`health.py`**: Health monitoring and system diagnostics (NEW)
+  - `HealthChecker`: Comprehensive system health monitoring
+  - `SystemMetrics`: Resource utilization tracking (CPU, memory, disk)
+  - AWS connectivity, cache system, and database health checks
+  - LLM provider availability monitoring
+  - HTTP server endpoint for external health monitoring
+
+- **`validation.py`**: Query validation middleware (NEW)
+  - `QueryValidator`: Validates queries before processing
+  - Date range validation with granularity-specific limits
+  - AWS service name validation and normalization
+  - SQL injection and security pattern detection
+  - Query complexity and cost estimation
 
 - **`optimization_formatter.py`**: Specialized formatting for optimization reports
   - Recommendation prioritization and grouping
@@ -196,7 +227,9 @@ The application uses a plugin-style architecture for LLM providers:
 ### LLM Provider Libraries
 - **openai**: OpenAI GPT integration
 - **anthropic**: Anthropic Claude integration
+- **google-generativeai**: Google Gemini integration
 - **boto3** (Bedrock): AWS Bedrock LLM services
+- **requests**: HTTP client for Ollama local provider
 
 ### Export Dependencies
 - **openpyxl**: Excel file export support (.xlsx format)
@@ -207,6 +240,7 @@ The application uses a plugin-style architecture for LLM providers:
 - **black**: Code formatting
 - **flake8**: Code linting
 - **mypy**: Static type checking
+- **psutil**: System metrics monitoring for health checks
 
 ## CLI Commands
 
@@ -218,8 +252,9 @@ The application provides several command groups:
 aws-cost-cli query "Show me EC2 costs for last month"
 aws-cost-cli query "S3 storage costs for 2025" --format detailed
 
-# Query with specific profiles and options
-aws-cost-cli query "RDS costs" --profile production --fresh
+# Query with specific profiles and provider options
+aws-cost-cli query "RDS costs" --profile production --fresh --llm-provider gemini
+aws-cost-cli query "Large query" --parallel --max-chunk-days 30 --performance-metrics
 ```
 
 ### Export Commands
@@ -247,36 +282,72 @@ aws-cost-cli interactive
 aws-cost-cli interactive --template "Monthly Service Breakdown"
 ```
 
-### Performance and Monitoring
+### Health and System Commands
 ```bash
-# Enable performance monitoring
-aws-cost-cli query "Large query" --performance --parallel
-aws-cost-cli query "EC2 costs 2025" --max-chunk-days 30 --performance
+# System health checks
+aws-cost-cli health
+aws-cost-cli health --detailed
+
+# Provider status and configuration
+aws-cost-cli providers
+aws-cost-cli providers --check-availability
+
+# Performance and monitoring
+aws-cost-cli query "Large query" --performance-metrics --parallel
+aws-cost-cli query "EC2 costs 2025" --max-chunk-days 30 --performance-metrics
 ```
 
 ## Recent Improvements
 
-### Date Parsing Enhancement (Latest)
-- **Fixed full year parsing consistency**: All LLM providers now correctly interpret queries like "S3 costs for 2025" as full calendar year (2025-01-01 to 2026-01-01)
-- **Standardized system prompts**: Ensured all providers (OpenAI, Anthropic, Bedrock, Ollama) have consistent date parsing logic
-- **Enhanced JSON templates**: Updated response templates to include all required fields for trend analysis and forecasting
-- **Improved fallback parser**: Robust pattern matching for date parsing when LLM providers are unavailable
+### New LLM Provider Support (Latest)
+- **Google Gemini Integration**: Added support for Gemini 1.5 Flash and Pro models with `GeminiProvider`
+- **Provider Factory System**: Centralized provider creation and management with `ProviderFactory`
+- **Multi-provider Configuration**: Enhanced config support with provider-specific settings and fallback chains
+- **Provider Performance Monitoring**: Real-time health checks and performance metrics for all providers
+
+### Advanced Date Formatting System
+- **Intelligent Period Detection**: Automatic detection of period types (single day/month/quarter/year, multi-month, custom ranges)
+- **Template-based Formatting**: Multiple format styles (smart, verbose, compact) with comprehensive error handling  
+- **Fiscal Year Support**: Configurable fiscal year start months and quarter calculations
+- **Safe Formatting**: Robust fallback mechanisms that never throw exceptions
+
+### Health Monitoring and Diagnostics
+- **Comprehensive Health Checks**: System metrics monitoring (CPU, memory, disk usage)
+- **AWS Connectivity Validation**: Real-time AWS service availability checking
+- **LLM Provider Health**: Provider availability and performance monitoring
+- **HTTP Health Endpoints**: External monitoring support with JSON status responses
+
+### Query Validation and Security
+- **Input Validation Middleware**: Pre-processing validation for all queries
+- **Security Pattern Detection**: SQL injection and malicious pattern filtering  
+- **AWS Service Validation**: Service name normalization and validation
+- **Date Range Optimization**: Granularity-aware date range limits and recommendations
+
+### Enhanced Configuration System
+- **Multi-provider Support**: Unified configuration for all 5 LLM providers (OpenAI, Anthropic, Bedrock, Ollama, Gemini)
+- **Hierarchical Configuration**: Environment variables, config files, and defaults with proper precedence
+- **Date Formatting Options**: Configurable formatting styles and fiscal year settings
+- **Performance Tuning**: Parallel execution, compression, and caching configuration
 
 ### GitHub Actions Integration
 - **Automated CI/CD**: GitHub Actions setup for continuous integration and deployment
-- **Automated testing**: Test suite execution on pull requests and commits
+- **Automated testing**: Test suite execution on pull requests and commits  
 - **Code quality checks**: Automated linting, formatting, and type checking
 
 ## Documentation
 
 The project includes comprehensive documentation:
 
-- **EXPORT_GUIDE.md**: Complete guide to data export features and formats
+- **USER_GUIDE.md**: Comprehensive end-user documentation for all features
+- **EXPORT_GUIDE.md**: Complete guide to data export features and formats  
 - **INTERACTIVE_QUERY_BUILDER.md**: Interactive query building documentation
 - **PERFORMANCE_GUIDE.md**: Performance optimization and monitoring guide
-- **USER_GUIDE.md**: End-user documentation for all features
+- **OLLAMA_SETUP.md**: Local LLM setup guide for Ollama integration
 - **CONTRIBUTING.md**: Development and contribution guidelines
 - **SECURITY.md**: Security practices and vulnerability reporting
+- **CHANGELOG.md**: Detailed version history and feature changes
+- **OPTIMIZATION_ROADMAP.md**: Future optimization plans and architectural improvements
+- **AGENTS.md**: AI agent configuration and integration documentation
 
 ## Quality Assurance
 
