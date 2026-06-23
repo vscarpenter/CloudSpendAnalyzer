@@ -116,49 +116,17 @@ class CacheManager:
         """
         return self._generate_query_hash(params, profile)
 
-    def get_cached_data(self, cache_key: str) -> Optional[CostData]:
-        """
-        Retrieve cached cost data by cache key.
-
-        Args:
-            cache_key: Cache key string
-
-        Returns:
-            Cached CostData if available and valid, None otherwise
-        """
-        cache_file = self._get_cache_file_path(cache_key)
-
-        if not self._is_cache_valid(cache_file, self.default_ttl):
-            return None
-
-        try:
-            with open(cache_file, "r") as f:
-                cache_data = json.load(f)
-
-            # Reconstruct CostData from cached JSON
-            return self._deserialize_cost_data(cache_data["data"])
-
-        except (json.JSONDecodeError, KeyError) as _e:
-            # If cache file is corrupted, remove it
-            try:
-                cache_file.unlink()
-            except OSError:
-                pass
-            return None
-        except OSError as e:
-            raise CacheError(f"Failed to read cache file: {e}")
-
-    def get_cached_data_by_params(
+    def get_cached_data(
         self,
         params: QueryParameters,
-        profile: Optional[str] = None,
+        profile: str = "default",
         ttl: Optional[int] = None,
     ) -> Optional[CostData]:
         """
-        Retrieve cached cost data if available and valid (legacy method).
+        Retrieve cached cost data if available and valid.
 
         Args:
-            params: Query parameters
+            params: Query parameters used to generate the cache key
             profile: AWS profile name
             ttl: TTL in seconds (uses default if None)
 
@@ -182,7 +150,7 @@ class CacheManager:
             return self._deserialize_cost_data(cache_data["data"])
 
         except (json.JSONDecodeError, KeyError, OSError) as _e:
-            # If cache file is corrupted, remove it
+            # If cache file is corrupted or unreadable, remove it
             try:
                 cache_file.unlink()
             except OSError:
@@ -190,52 +158,17 @@ class CacheManager:
             return None
 
     def cache_data(
-        self, cache_key: str, data: CostData, ttl: Optional[int] = None
-    ) -> bool:
-        """
-        Cache cost data with cache key.
-
-        Args:
-            cache_key: Cache key string
-            data: Cost data to cache
-            ttl: TTL in seconds (uses default if None)
-
-        Returns:
-            True if caching succeeded, False otherwise
-        """
-        if ttl is None:
-            ttl = self.default_ttl
-
-        cache_file = self._get_cache_file_path(cache_key)
-
-        try:
-            cache_entry = {
-                "data": self._serialize_cost_data(data),
-                "cached_at": datetime.now(timezone.utc).isoformat(),
-                "ttl": ttl,
-                "query_hash": cache_key,
-            }
-
-            with open(cache_file, "w") as f:
-                json.dump(cache_entry, f, indent=2, default=str)
-
-            return True
-
-        except (OSError, TypeError, ValueError) as _e:
-            raise CacheError(f"Failed to write cache file: {_e}")
-
-    def cache_data_by_params(
         self,
         params: QueryParameters,
         data: CostData,
-        profile: Optional[str] = None,
+        profile: str = "default",
         ttl: Optional[int] = None,
     ) -> bool:
         """
-        Cache cost data with TTL (legacy method).
+        Cache cost data with TTL.
 
         Args:
-            params: Query parameters used to generate cache key
+            params: Query parameters used to generate the cache key
             data: Cost data to cache
             profile: AWS profile name
             ttl: TTL in seconds (uses default if None)

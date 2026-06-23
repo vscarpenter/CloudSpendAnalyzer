@@ -428,10 +428,9 @@ class QueryPipeline:
         # Check cache first if enabled
         if use_cache:
             try:
-                cache_key = self.cache_manager.generate_cache_key(
+                cached_data = self.cache_manager.get_cached_data(
                     query_params, context.profile or "default"
                 )
-                cached_data = self.cache_manager.get_cached_data(cache_key)
                 if cached_data:
                     result.cache_hit = True
                     result.metadata["data_source"] = "cache"

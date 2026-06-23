@@ -174,10 +174,9 @@ class AWSCostClient:
         # Try cache first if enabled and cache manager is available
         if use_cache and self.cache_manager:
             try:
-                cache_key = self.cache_manager.generate_cache_key(
+                cached_data = self.cache_manager.get_cached_data(
                     params, self.profile or "default"
                 )
-                cached_data = self.cache_manager.get_cached_data(cache_key)
                 if cached_data:
                     return cached_data
             except CacheError:
@@ -201,10 +200,9 @@ class AWSCostClient:
                 # Cache the result if cache manager is available
                 if self.cache_manager:
                     try:
-                        cache_key = self.cache_manager.generate_cache_key(
-                            params, self.profile or "default"
+                        self.cache_manager.cache_data(
+                            params, cost_data, self.profile or "default"
                         )
-                        self.cache_manager.cache_data(cache_key, cost_data)
                     except CacheError:
                         # Continue without caching if cache fails
                         pass
@@ -603,10 +601,9 @@ class AWSCostClient:
         for query_params in common_queries:
             try:
                 # Check if already cached
-                cache_key = self.cache_manager.generate_cache_key(
+                if not self.cache_manager.get_cached_data(
                     query_params, self.profile or "default"
-                )
-                if not self.cache_manager.get_cached_data(cache_key):
+                ):
                     # Not cached, fetch and cache
                     self.get_cost_and_usage(query_params, use_cache=False)
                     warming_results["queries_warmed"] += 1
@@ -914,12 +911,10 @@ class AWSCostClient:
 
         for query_params in queries:
             try:
-                cache_key = self.cache_manager.generate_cache_key(
-                    query_params, self.profile or "default"
-                )
-
                 # Check if already cached
-                if self.cache_manager.get_cached_data(cache_key):
+                if self.cache_manager.get_cached_data(
+                    query_params, self.profile or "default"
+                ):
                     results["already_cached"] += 1
                 else:
                     # Fetch and cache

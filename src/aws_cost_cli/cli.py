@@ -2095,13 +2095,33 @@ def test(ctx, debug: bool):
     # Test 5: Cache
     console.print("\n5️⃣  Testing cache system...")
     try:
+        from datetime import datetime, timezone
+        from decimal import Decimal
+        from .models import CostAmount, CostData, QueryParameters, TimePeriod
+
         cache_manager = CacheManager()
-        # Test cache directory creation
-        cache_manager.cache_data("test_key", {"test": "data"})
-        cached_data = cache_manager.get_cached_data("test_key")
+
+        # Build a minimal real query + cost data to exercise the cache round-trip
+        test_params = QueryParameters(service="__cache_test__")
+        test_time_period = TimePeriod(
+            start=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            end=datetime(2024, 1, 31, tzinfo=timezone.utc),
+        )
+        test_cost_data = CostData(
+            results=[],
+            time_period=test_time_period,
+            total_cost=CostAmount(amount=Decimal("0.00"), unit="USD"),
+            currency="USD",
+            group_definitions=[],
+        )
+
+        cache_manager.cache_data(test_params, test_cost_data)
+        cached_data = cache_manager.get_cached_data(test_params)
         if cached_data:
             console.print("   ✅ Cache system is working")
-            cache_manager.invalidate_cache("test_key")
+            # Clean up the test entry
+            test_hash = cache_manager.generate_cache_key(test_params, "default")
+            cache_manager.invalidate_cache(test_hash)
         else:
             console.print("   ❌ Cache system failed")
     except Exception as e:

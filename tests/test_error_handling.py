@@ -444,8 +444,9 @@ class TestCacheErrorHandling:
             group_definitions=[],
         )
 
-        with pytest.raises(CacheError):
-            cache_manager.cache_data("test_key", cost_data)
+        # A write failure should be handled gracefully and return False
+        success = cache_manager.cache_data(QueryParameters(service="EC2"), cost_data)
+        assert success is False
 
 
 class TestConfigurationErrorHandling:

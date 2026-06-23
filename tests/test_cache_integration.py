@@ -55,9 +55,8 @@ class TestCacheIntegration:
 
         result = aws_client.get_cost_and_usage(params)
 
-        # Verify cache was checked
-        mock_cache_manager.generate_cache_key.assert_called_once()
-        mock_cache_manager.get_cached_data.assert_called_once_with("test_key")
+        # Verify cache was checked with the query params and profile
+        mock_cache_manager.get_cached_data.assert_called_once_with(params, "default")
 
         # Verify API was not called
         mock_client.get_cost_and_usage.assert_not_called()
@@ -89,8 +88,8 @@ class TestCacheIntegration:
 
         result = aws_client.get_cost_and_usage(params)
 
-        # Verify cache was checked
-        mock_cache_manager.get_cached_data.assert_called_once_with("test_key")
+        # Verify cache was checked with the query params and profile
+        mock_cache_manager.get_cached_data.assert_called_once_with(params, "default")
 
         # Verify API was called
         mock_client.get_cost_and_usage.assert_called_once()
