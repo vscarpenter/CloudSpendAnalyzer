@@ -442,6 +442,24 @@ class TestCLI:
         assert "Output Format: simple" in result.output
 
     @patch("src.aws_cost_cli.cli.ConfigManager")
+    def test_show_config_masks_nested_api_key(self, mock_config_manager):
+        """show-config must never print an API key verbatim, even when nested."""
+        nested_config = Config(
+            llm_provider="openai",
+            llm_config={"openai": {"api_key": "sk-supersecret-1234567890"}},
+            output_format="simple",
+        )
+        mock_config_manager.return_value.load_config.return_value = nested_config
+        mock_config_manager.return_value.get_default_config_path.return_value = (
+            "/test/config.yaml"
+        )
+
+        result = self.runner.invoke(cli, ["show-config"])
+
+        assert result.exit_code == 0
+        assert "sk-supersecret-1234567890" not in result.output
+
+    @patch("src.aws_cost_cli.cli.ConfigManager")
     def test_show_config_command_no_config(self, mock_config_manager):
         """Test show-config command with no configuration file."""
         mock_config_manager.return_value.load_config.side_effect = FileNotFoundError()

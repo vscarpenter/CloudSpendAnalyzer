@@ -4,7 +4,7 @@ import sys
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import click
 from rich.console import Console
@@ -947,6 +947,27 @@ def list_profiles(config_file: Optional[str]):
         sys.exit(1)
 
 
+_SECRET_KEY_HINTS = ("api_key", "apikey", "secret", "token", "password")
+
+
+def _mask_secret(value: Any) -> str:
+    """Mask a secret value, showing only a short prefix."""
+    text = str(value)
+    return f"{text[:8]}..." if len(text) > 8 else "***"
+
+
+def _print_masked_config(data: dict, indent: str = "   ") -> None:
+    """Print a config mapping, masking any secret value at any nesting depth."""
+    for key, value in data.items():
+        if isinstance(value, dict):
+            console.print(f"{indent}{key}:")
+            _print_masked_config(value, indent + "   ")
+        elif any(hint in str(key).lower() for hint in _SECRET_KEY_HINTS):
+            console.print(f"{indent}{key}: {_mask_secret(value)}")
+        else:
+            console.print(f"{indent}{key}: {value}")
+
+
 @cli.command()
 @click.option(
     "--config-file",
@@ -995,13 +1016,7 @@ def show_config(config_file: Optional[str]):
 
         if config.llm_config:
             console.print("\n🧠 LLM Configuration:")
-            for key, value in config.llm_config.items():
-                if key == "api_key":
-                    # Mask API key for security
-                    masked_value = f"{value[:8]}..." if len(value) > 8 else "***"
-                    console.print(f"   {key}: {masked_value}")
-                else:
-                    console.print(f"   {key}: {value}")
+            _print_masked_config(config.llm_config)
 
     except Exception as e:
         console.print(
