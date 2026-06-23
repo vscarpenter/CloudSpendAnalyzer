@@ -3,6 +3,54 @@
 from typing import Optional, List
 
 
+# Static suggestion text shared by the exceptions, keyed by error code. Keeping
+# these here removes the per-class duplication of literal lists; exceptions that
+# need additional, context-dependent hints (a specific AWS error code, a chosen
+# provider, an available fallback, ...) start from the relevant base list and
+# append to it.
+_BASE_SUGGESTIONS = {
+    "VALIDATION_ERROR": [
+        "Check your query syntax and parameters",
+        "Ensure date ranges are valid and not too large",
+        "Verify service names are correct",
+        "Use supported metric types and dimensions",
+    ],
+    "CREDENTIALS_ERROR": [
+        "Run 'aws configure' to set up credentials",
+        "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables",
+        "Use IAM roles if running on EC2",
+        "Check that your AWS profile exists and is configured correctly",
+    ],
+    "NETWORK_ERROR": [
+        "Check your internet connection",
+        "Verify you can reach AWS services",
+        "Check if you're behind a corporate firewall or proxy",
+        "Try again in a few minutes",
+    ],
+    "QUERY_PARSING_ERROR": [
+        "Try rephrasing your query more clearly",
+        "Use specific service names (e.g., 'EC2', 'S3', 'RDS')",
+        "Include clear time periods (e.g., 'last month', 'this year')",
+        "Examples: 'How much did I spend on EC2 last month?', 'What are my total AWS costs this year?'",
+    ],
+    "CACHE_ERROR": [
+        "Check disk space and permissions",
+        "Try clearing the cache with 'aws-cost-cli clear-cache'",
+        "The CLI will continue without caching",
+    ],
+    "CONFIGURATION_ERROR": [
+        "Check your configuration file syntax",
+        "Run 'aws-cost-cli configure' to set up configuration",
+        "Verify all required fields are present",
+    ],
+    "PARAMETER_VALIDATION_ERROR": [
+        "Check that all required parameters are provided",
+        "Verify date formats are correct (YYYY-MM-DD)",
+        "Ensure service names are valid AWS service names",
+    ],
+}
+
+
 class AWSCostCLIError(Exception):
     """Base exception for AWS Cost CLI errors."""
 
@@ -30,13 +78,9 @@ class ValidationError(AWSCostCLIError):
     """Exception raised when query validation fails."""
 
     def __init__(self, message: str, validation_errors: Optional[List[str]] = None):
-        suggestions = [
-            "Check your query syntax and parameters",
-            "Ensure date ranges are valid and not too large",
-            "Verify service names are correct",
-            "Use supported metric types and dimensions",
-        ]
-        super().__init__(message, "VALIDATION_ERROR", suggestions)
+        super().__init__(
+            message, "VALIDATION_ERROR", list(_BASE_SUGGESTIONS["VALIDATION_ERROR"])
+        )
         self.validation_errors = validation_errors or []
 
 
@@ -48,12 +92,7 @@ class AWSCredentialsError(AWSCostCLIError):
         message: str = "AWS credentials not found or invalid",
         profile: Optional[str] = None,
     ):
-        suggestions = [
-            "Run 'aws configure' to set up credentials",
-            "Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables",
-            "Use IAM roles if running on EC2",
-            "Check that your AWS profile exists and is configured correctly",
-        ]
+        suggestions = list(_BASE_SUGGESTIONS["CREDENTIALS_ERROR"])
 
         if profile:
             message = f"AWS credentials for profile '{profile}' not found or invalid"
@@ -135,14 +174,9 @@ class NetworkError(AWSCostCLIError):
     """Exception raised when network connectivity issues occur."""
 
     def __init__(self, message: str = "Network connectivity error"):
-        suggestions = [
-            "Check your internet connection",
-            "Verify you can reach AWS services",
-            "Check if you're behind a corporate firewall or proxy",
-            "Try again in a few minutes",
-        ]
-
-        super().__init__(message, "NETWORK_ERROR", suggestions)
+        super().__init__(
+            message, "NETWORK_ERROR", list(_BASE_SUGGESTIONS["NETWORK_ERROR"])
+        )
 
 
 class QueryParsingError(AWSCostCLIError):
@@ -155,18 +189,15 @@ class QueryParsingError(AWSCostCLIError):
     ):
         self.original_query = original_query
 
-        suggestions = [
-            "Try rephrasing your query more clearly",
-            "Use specific service names (e.g., 'EC2', 'S3', 'RDS')",
-            "Include clear time periods (e.g., 'last month', 'this year')",
-            "Examples: 'How much did I spend on EC2 last month?', 'What are my total AWS costs this year?'",
-        ]
-
         # Only override message if it's the default message and original_query is provided
         if original_query and message == "Failed to parse natural language query":
             message = f"Failed to parse query: '{original_query}'"
 
-        super().__init__(message, "QUERY_PARSING_ERROR", suggestions)
+        super().__init__(
+            message,
+            "QUERY_PARSING_ERROR",
+            list(_BASE_SUGGESTIONS["QUERY_PARSING_ERROR"]),
+        )
 
 
 class LLMProviderError(AWSCostCLIError):
@@ -218,13 +249,7 @@ class CacheError(AWSCostCLIError):
     """Exception raised when cache operations fail."""
 
     def __init__(self, message: str = "Cache operation failed"):
-        suggestions = [
-            "Check disk space and permissions",
-            "Try clearing the cache with 'aws-cost-cli clear-cache'",
-            "The CLI will continue without caching",
-        ]
-
-        super().__init__(message, "CACHE_ERROR", suggestions)
+        super().__init__(message, "CACHE_ERROR", list(_BASE_SUGGESTIONS["CACHE_ERROR"]))
 
 
 class ConfigurationError(AWSCostCLIError):
@@ -235,11 +260,7 @@ class ConfigurationError(AWSCostCLIError):
     ):
         self.config_file = config_file
 
-        suggestions = [
-            "Check your configuration file syntax",
-            "Run 'aws-cost-cli configure' to set up configuration",
-            "Verify all required fields are present",
-        ]
+        suggestions = list(_BASE_SUGGESTIONS["CONFIGURATION_ERROR"])
 
         if config_file:
             suggestions.append(f"Configuration file: {config_file}")
@@ -259,11 +280,7 @@ class ParameterValidationError(ValidationError):
     ):
         self.field = field
 
-        suggestions = [
-            "Check that all required parameters are provided",
-            "Verify date formats are correct (YYYY-MM-DD)",
-            "Ensure service names are valid AWS service names",
-        ]
+        suggestions = list(_BASE_SUGGESTIONS["PARAMETER_VALIDATION_ERROR"])
 
         if field:
             suggestions.append(f"Issue with field: {field}")

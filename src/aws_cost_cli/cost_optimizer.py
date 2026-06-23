@@ -47,6 +47,26 @@ class OptimizationRecommendation:
     estimated_effort: Optional[str] = None  # "low", "medium", "high"
     metadata: Optional[Dict[str, Any]] = None
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-friendly mapping."""
+        return {
+            "type": self.type.value,
+            "severity": self.severity.value,
+            "title": self.title,
+            "description": self.description,
+            "potential_savings": {
+                "amount": float(self.potential_savings.amount),
+                "currency": self.potential_savings.unit,
+            },
+            "confidence_level": self.confidence_level,
+            "resource_id": self.resource_id,
+            "service": self.service,
+            "region": self.region,
+            "action_required": self.action_required,
+            "estimated_effort": self.estimated_effort,
+            "metadata": self.metadata,
+        }
+
 
 @dataclass
 class CostAnomaly:
@@ -61,6 +81,25 @@ class CostAnomaly:
     description: str
     root_cause_analysis: Optional[str] = None
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-friendly mapping."""
+        return {
+            "service": self.service,
+            "anomaly_date": self.anomaly_date.isoformat(),
+            "expected_cost": {
+                "amount": float(self.expected_cost.amount),
+                "currency": self.expected_cost.unit,
+            },
+            "actual_cost": {
+                "amount": float(self.actual_cost.amount),
+                "currency": self.actual_cost.unit,
+            },
+            "variance_percentage": self.variance_percentage,
+            "severity": self.severity.value,
+            "description": self.description,
+            "root_cause_analysis": self.root_cause_analysis,
+        }
+
 
 @dataclass
 class BudgetVariance:
@@ -74,6 +113,30 @@ class BudgetVariance:
     time_period: TimePeriod
     is_over_budget: bool
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-friendly mapping."""
+        return {
+            "budget_name": self.budget_name,
+            "budgeted_amount": {
+                "amount": float(self.budgeted_amount.amount),
+                "currency": self.budgeted_amount.unit,
+            },
+            "actual_amount": {
+                "amount": float(self.actual_amount.amount),
+                "currency": self.actual_amount.unit,
+            },
+            "variance_amount": {
+                "amount": float(self.variance_amount.amount),
+                "currency": self.variance_amount.unit,
+            },
+            "variance_percentage": self.variance_percentage,
+            "is_over_budget": self.is_over_budget,
+            "time_period": {
+                "start": self.time_period.start.isoformat(),
+                "end": self.time_period.end.isoformat(),
+            },
+        }
+
 
 @dataclass
 class OptimizationReport:
@@ -85,6 +148,41 @@ class OptimizationReport:
     total_potential_savings: CostAmount
     report_date: datetime
     analysis_period: TimePeriod
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the full report to a JSON-friendly mapping.
+
+        Mirrors the structure the CLI emits for ``optimize --format json``,
+        including the derived ``summary`` counts.
+        """
+        return {
+            "report_date": self.report_date.isoformat(),
+            "analysis_period": {
+                "start": self.analysis_period.start.isoformat(),
+                "end": self.analysis_period.end.isoformat(),
+            },
+            "total_potential_savings": {
+                "amount": float(self.total_potential_savings.amount),
+                "currency": self.total_potential_savings.unit,
+            },
+            "summary": {
+                "total_recommendations": len(self.recommendations),
+                "high_priority_recommendations": len(
+                    [
+                        r
+                        for r in self.recommendations
+                        if r.severity.value in ["high", "critical"]
+                    ]
+                ),
+                "cost_anomalies": len(self.anomalies),
+                "budget_variances": len(self.budget_variances),
+            },
+            "recommendations": [rec.to_dict() for rec in self.recommendations],
+            "anomalies": [anomaly.to_dict() for anomaly in self.anomalies],
+            "budget_variances": [
+                variance.to_dict() for variance in self.budget_variances
+            ],
+        }
 
 
 class CostOptimizer:

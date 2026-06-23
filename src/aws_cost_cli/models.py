@@ -75,6 +75,10 @@ class CostAmount:
     amount: Decimal
     unit: str = "USD"
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-friendly mapping (amount as float)."""
+        return {"amount": float(self.amount), "currency": self.unit}
+
 
 @dataclass
 class Group:
@@ -82,6 +86,15 @@ class Group:
 
     keys: List[str]
     metrics: Dict[str, CostAmount]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-friendly mapping."""
+        return {
+            "keys": self.keys,
+            "metrics": {
+                name: amount.to_dict() for name, amount in self.metrics.items()
+            },
+        }
 
 
 @dataclass
@@ -92,6 +105,18 @@ class CostResult:
     total: CostAmount
     groups: List[Group]
     estimated: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-friendly mapping."""
+        return {
+            "period": {
+                "start": self.time_period.start.isoformat(),
+                "end": self.time_period.end.isoformat(),
+            },
+            "total": self.total.to_dict(),
+            "estimated": self.estimated,
+            "groups": [group.to_dict() for group in self.groups],
+        }
 
 
 @dataclass
@@ -107,6 +132,22 @@ class CostData:
     def __post_init__(self):
         if self.group_definitions is None:
             self.group_definitions = []
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the cost-data portion of a query response to a mapping.
+
+        This produces the ``total_cost``/``time_period``/``results`` structure
+        used by the CLI's JSON output. The outer envelope (``query``,
+        ``success``, ``metadata``) is assembled by the caller.
+        """
+        return {
+            "total_cost": self.total_cost.to_dict(),
+            "time_period": {
+                "start": self.time_period.start.isoformat(),
+                "end": self.time_period.end.isoformat(),
+            },
+            "results": [result.to_dict() for result in self.results],
+        }
 
 
 @dataclass
