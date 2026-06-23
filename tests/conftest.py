@@ -44,6 +44,24 @@ def _is_local(host) -> bool:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_home(monkeypatch, tmp_path):
+    """Point HOME at a throwaway dir so a developer's real ~/.aws-cost-cli
+    config never leaks into (or out of) the suite, and provide a dummy AWS
+    'default' profile so boto3 session construction succeeds without a real
+    ~/.aws/config (no real calls happen — the network is blocked below). Keeps
+    tests reproducible locally and in CI."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    aws_dir = tmp_path / ".aws"
+    aws_dir.mkdir(parents=True, exist_ok=True)
+    (aws_dir / "config").write_text("[default]\nregion = us-east-1\noutput = json\n")
+    (aws_dir / "credentials").write_text(
+        "[default]\naws_access_key_id = testing\naws_secret_access_key = testing\n"
+    )
+
+
+@pytest.fixture(autouse=True)
 def _isolate_from_network(monkeypatch):
     """Block non-local network and neutralize backoff sleeps for every test.
 
