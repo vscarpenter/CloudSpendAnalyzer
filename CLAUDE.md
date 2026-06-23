@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AWS Cost Explorer CLI is a comprehensive Python command-line tool that enables natural language querying of AWS cost and billing data. The application integrates with multiple LLM providers (OpenAI, Anthropic, Bedrock, Ollama, Gemini) to parse user queries, analyze trends, provide optimization recommendations, and format responses naturally. It includes advanced features like data export, interactive query building, cost optimization analysis, performance monitoring, health checks, and intelligent date formatting.
+AWS Cost Explorer CLI is a Python command-line tool that enables natural language querying of AWS cost and billing data. The application integrates with multiple LLM providers (OpenAI, Anthropic, Bedrock, Ollama, Gemini) to parse user queries, provide optimization recommendations, and format responses naturally. It includes features like data export (CSV/JSON), interactive query building, cost optimization analysis, anomaly detection, health checks, and smart date formatting.
 
 ## Common Commands
 
@@ -62,7 +62,6 @@ The application follows a modular architecture with clear separation of concerns
   - `QueryParameters`: Natural language query parsing results
   - `CostData`, `CostResult`: AWS cost data representations
   - `TimePeriod`, `MetricType`: Time and metric type definitions
-  - `TrendData`, `ForecastData`: Trend analysis and forecasting models
 
 - **`config.py`**: Configuration management system (`ConfigManager`)
   - Hierarchical config loading: defaults → file → environment variables
@@ -80,8 +79,7 @@ The application follows a modular architecture with clear separation of concerns
   - Parses natural language queries into structured `QueryParameters`
   - Enhanced year parsing for full year queries (e.g., "S3 costs for 2025")
   - Consistent date parsing across all LLM providers with fallback parser support
-  - Comprehensive system prompts with trend analysis and forecasting capabilities
-  - Provider performance monitoring and health checks with failover support
+  - Provider health checks with failover support
 
 - **`cache_manager.py`**: File-based caching system with TTL
   - Hash-based cache keys from query parameters
@@ -100,7 +98,6 @@ The application follows a modular architecture with clear separation of concerns
   - `QueryPipeline`: Orchestrates the complete query flow
   - `QueryContext`, `QueryResult`: Request/response handling
   - Error handling and retry logic
-  - Performance optimization options
 
 - **`cost_optimizer.py`**: Cost optimization analysis and recommendations
   - `CostOptimizer`: Analyzes cost data for optimization opportunities
@@ -108,11 +105,10 @@ The application follows a modular architecture with clear separation of concerns
   - Support for rightsizing, reserved instances, savings plans analysis
   - Cost anomaly detection and budget variance analysis
 
-- **`data_exporter.py`**: Multi-format data export capabilities
-  - `ExportManager`: Coordinates different export formats
-  - `CSVExporter`, `JSONExporter`, `ExcelExporter`: Format-specific exporters
-  - Email integration for automated report distribution
-  - Template-based export formatting
+- **`data_exporter.py`**: Data export capabilities (CSV and JSON)
+  - `ExportManager`: Coordinates the export formats
+  - `CSVExporter`, `JSONExporter`: Format-specific exporters
+  - Date-formatted output via the shared `DateFormatter`
 
 - **`interactive_query_builder.py`**: Guided query construction interface
   - `InteractiveQueryBuilder`: Step-by-step query building
@@ -120,25 +116,13 @@ The application follows a modular architecture with clear separation of concerns
   - Query history and favorites management
   - Real-time query validation and suggestions
 
-- **`trend_analysis.py`**: Cost trend analysis and forecasting
-  - `TrendAnalyzer`: Period-over-period comparison analysis
-  - `CostForecaster`: Predictive cost modeling
-  - Statistical analysis (moving averages, regression)
-  - Seasonal pattern detection
-
-- **`performance.py`**: Performance optimization and monitoring
-  - `PerformanceMonitor`: Query performance tracking
-  - `QueryOptimizer`: Automatic query optimization
-  - Parallel execution for large date ranges
-  - Compression and caching optimizations
-
 ### Supporting Components
 
 - **`cli.py`**: Main CLI interface with click framework integration
-  - Command groups for query, export, optimization, interactive, and health modes
-  - Rich terminal output formatting with comprehensive progress indicators
+  - Commands for query, export, optimize, anomaly detection, interactive, cache management, and health
+  - `providers` command group with `list`, `test`, `performance`, `health`, and `reset` subcommands
+  - Rich terminal output formatting with progress indicators
   - Multi-provider switching support with `--llm-provider` option
-  - Performance monitoring options (`--performance-metrics`, `--parallel`)
   - Comprehensive error handling and user feedback
 
 - **`exceptions.py`**: Centralized exception handling
@@ -152,32 +136,19 @@ The application follows a modular architecture with clear separation of concerns
   - Business calendar support
   - Time zone handling
 
-- **`date_formatter.py`**: Intelligent date formatting system (NEW)
-  - `PeriodTypeDetector`: Automatically detects period types (single day/month/quarter/year, multi-month, custom range)
-  - `FormatRules`: Template-based formatting with multiple styles (smart, verbose, compact)
-  - `DateFormatter`: Main formatter with comprehensive error handling and fallback strategies
-  - Fiscal year support and configurable formatting options
-  - Safe formatting methods that never throw exceptions
+- **`date_formatter.py`**: Small smart date formatter (~135 lines)
+  - `DateFormatter`: Detects the period type from a date range and renders it concisely (e.g. "August 2025", "Q3 2025", "2025", "Jul 1 - Sep 30, 2025")
+  - `safe_format_time_period`: Formatting helper that falls back gracefully and never throws
 
-- **`provider_factory.py`**: LLM provider factory and management (NEW)
+- **`provider_factory.py`**: LLM provider factory and management
   - `ProviderFactory`: Creates and manages LLM provider instances
   - Support for all providers: OpenAI, Anthropic, Bedrock, Ollama, Gemini
   - Provider configuration validation and status checking
   - Unified provider creation with consistent error handling
 
-- **`health.py`**: Health monitoring and system diagnostics (NEW)
-  - `HealthChecker`: Comprehensive system health monitoring
-  - `SystemMetrics`: Resource utilization tracking (CPU, memory, disk)
-  - AWS connectivity, cache system, and database health checks
-  - LLM provider availability monitoring
-  - HTTP server endpoint for external health monitoring
-
-- **`validation.py`**: Query validation middleware (NEW)
-  - `QueryValidator`: Validates queries before processing
-  - Date range validation with granularity-specific limits
-  - AWS service name validation and normalization
-  - SQL injection and security pattern detection
-  - Query complexity and cost estimation
+- **`health.py`**: Health checks and system diagnostics
+  - One-shot health check covering AWS credential validity and cache directory access
+  - Returns a structured result with per-check status; CLI exits 0 when healthy, 1 otherwise
 
 - **`optimization_formatter.py`**: Specialized formatting for optimization reports
   - Recommendation prioritization and grouping
@@ -191,9 +162,8 @@ The application follows a modular architecture with clear separation of concerns
    - `query_processor` (LLM parsing) → `QueryParameters`
    - `cache_manager` (check cache) → cached result or AWS API call
    - `aws_client` → raw cost data → `CostData` models
-   - Optional: `trend_analysis` → trend calculations and forecasts
    - `response_formatter` → formatted response
-3. Export command → `data_exporter` → multi-format output files
+3. Export command → `data_exporter` → CSV or JSON output files
 4. Optimization command → `cost_optimizer` → recommendations and analysis
 5. Interactive command → `interactive_query_builder` → guided query construction
 
@@ -212,8 +182,7 @@ The application uses a plugin-style architecture for LLM providers:
 - Query parsing and response formatting are provider-agnostic
 - Consistent system prompts across all providers for reliable date parsing
 - Fallback mechanisms for provider failures with robust pattern matching
-- Support for complex queries including trend analysis and forecasting
-- Comprehensive error handling and validation for all providers
+- Comprehensive error handling for all providers
 
 ## Key Dependencies
 
@@ -232,69 +201,64 @@ The application uses a plugin-style architecture for LLM providers:
 - **requests**: HTTP client for Ollama local provider
 
 ### Export Dependencies
-- **openpyxl**: Excel file export support (.xlsx format)
-- Standard library: **csv**, **json**, **smtplib** (email integration)
+- Standard library only: **csv**, **json** (CSV and JSON export formats)
 
 ### Development Tools
 - **pytest**: Testing framework with coverage support
 - **black**: Code formatting
 - **flake8**: Code linting
 - **mypy**: Static type checking
-- **psutil**: System metrics monitoring for health checks
 
 ## CLI Commands
 
-The application provides several command groups:
+The full command surface: `cache-stats`, `cleanup-cache`, `clear-cache`, `configure`, `detect-anomalies`, `export`, `favorites`, `health`, `interactive`, `list-profiles`, `optimize`, `pipeline-status`, `providers`, `query`, `show-config`, `suggest`, `test`, `warm-cache`. The `providers` group has subcommands: `list`, `test`, `performance`, `health`, `reset`.
 
 ### Basic Query Commands
 ```bash
 # Basic cost queries
 aws-cost-cli query "Show me EC2 costs for last month"
-aws-cost-cli query "S3 storage costs for 2025" --format detailed
+aws-cost-cli query "S3 storage costs for 2025" --format rich
 
 # Query with specific profiles and provider options
 aws-cost-cli query "RDS costs" --profile production --fresh --llm-provider gemini
-aws-cost-cli query "Large query" --parallel --max-chunk-days 30 --performance-metrics
 ```
+Query options: `--profile/-p`, `--fresh/-f`, `--format` (simple, rich, llm, json), `--llm-provider`, `--config-file/-c`.
 
 ### Export Commands
 ```bash
-# Export to different formats
+# Export to CSV or JSON (the only supported formats)
 aws-cost-cli export "EC2 costs last quarter" --format csv --output costs.csv
-aws-cost-cli export "All services 2025" --format excel --output report.xlsx
-aws-cost-cli export "S3 costs" --format json --email team@company.com
+aws-cost-cli export "S3 costs" --format json --output costs.json
 ```
 
-### Optimization Commands
+### Optimization and Anomaly Commands
 ```bash
 # Cost optimization analysis
 aws-cost-cli optimize --type rightsizing
 aws-cost-cli optimize --type reserved_instances --service EC2
-aws-cost-cli optimize --severity high --format detailed
+
+# Cost anomaly detection
+aws-cost-cli detect-anomalies
 ```
 
 ### Interactive Mode
 ```bash
 # Launch interactive query builder
 aws-cost-cli interactive
-
-# Use specific templates
-aws-cost-cli interactive --template "Monthly Service Breakdown"
 ```
 
-### Health and System Commands
+### Health and Provider Commands
 ```bash
-# System health checks
+# One-shot health check (AWS credentials + cache directory)
 aws-cost-cli health
-aws-cost-cli health --detailed
+aws-cost-cli health --json
 
-# Provider status and configuration
-aws-cost-cli providers
-aws-cost-cli providers --check-availability
-
-# Performance and monitoring
-aws-cost-cli query "Large query" --performance-metrics --parallel
-aws-cost-cli query "EC2 costs 2025" --max-chunk-days 30 --performance-metrics
+# Provider management (subcommand group)
+aws-cost-cli providers list
+aws-cost-cli providers test gemini
+aws-cost-cli providers health
+aws-cost-cli providers performance
+aws-cost-cli providers reset
 ```
 
 ## Recent Improvements
@@ -305,29 +269,17 @@ aws-cost-cli query "EC2 costs 2025" --max-chunk-days 30 --performance-metrics
 - **Multi-provider Configuration**: Enhanced config support with provider-specific settings and fallback chains
 - **Provider Performance Monitoring**: Real-time health checks and performance metrics for all providers
 
-### Advanced Date Formatting System
-- **Intelligent Period Detection**: Automatic detection of period types (single day/month/quarter/year, multi-month, custom ranges)
-- **Template-based Formatting**: Multiple format styles (smart, verbose, compact) with comprehensive error handling  
-- **Fiscal Year Support**: Configurable fiscal year start months and quarter calculations
-- **Safe Formatting**: Robust fallback mechanisms that never throw exceptions
+### Smart Date Formatting
+- **Period Detection**: Renders a date range concisely based on its type (single month/quarter/year or custom range)
+- **Safe Formatting**: Falls back gracefully and never throws exceptions
 
-### Health Monitoring and Diagnostics
-- **Comprehensive Health Checks**: System metrics monitoring (CPU, memory, disk usage)
-- **AWS Connectivity Validation**: Real-time AWS service availability checking
-- **LLM Provider Health**: Provider availability and performance monitoring
-- **HTTP Health Endpoints**: External monitoring support with JSON status responses
-
-### Query Validation and Security
-- **Input Validation Middleware**: Pre-processing validation for all queries
-- **Security Pattern Detection**: SQL injection and malicious pattern filtering  
-- **AWS Service Validation**: Service name normalization and validation
-- **Date Range Optimization**: Granularity-aware date range limits and recommendations
+### Health Checks
+- **One-shot Health Command**: Validates AWS credentials and cache directory access, with optional JSON output
 
 ### Enhanced Configuration System
 - **Multi-provider Support**: Unified configuration for all 5 LLM providers (OpenAI, Anthropic, Bedrock, Ollama, Gemini)
 - **Hierarchical Configuration**: Environment variables, config files, and defaults with proper precedence
-- **Date Formatting Options**: Configurable formatting styles and fiscal year settings
-- **Performance Tuning**: Parallel execution, compression, and caching configuration
+- **Date Formatting Options**: Configurable formatting settings
 
 ### GitHub Actions Integration
 - **Automated CI/CD**: GitHub Actions setup for continuous integration and deployment
@@ -339,22 +291,13 @@ aws-cost-cli query "EC2 costs 2025" --max-chunk-days 30 --performance-metrics
 The project includes comprehensive documentation:
 
 - **USER_GUIDE.md**: Comprehensive end-user documentation for all features
-- **EXPORT_GUIDE.md**: Complete guide to data export features and formats  
-- **INTERACTIVE_QUERY_BUILDER.md**: Interactive query building documentation
-- **PERFORMANCE_GUIDE.md**: Performance optimization and monitoring guide
 - **OLLAMA_SETUP.md**: Local LLM setup guide for Ollama integration
-- **CONTRIBUTING.md**: Development and contribution guidelines
-- **SECURITY.md**: Security practices and vulnerability reporting
-- **CHANGELOG.md**: Detailed version history and feature changes
-- **OPTIMIZATION_ROADMAP.md**: Future optimization plans and architectural improvements
-- **AGENTS.md**: AI agent configuration and integration documentation
 
 ## Quality Assurance
 
 ### Testing Strategy
 - **Unit tests**: Comprehensive test coverage for all core components
 - **Integration tests**: End-to-end testing of query processing pipeline
-- **Performance tests**: Load testing for large dataset queries
 - **Error handling tests**: Validation of error scenarios and edge cases
 
 ### Code Quality

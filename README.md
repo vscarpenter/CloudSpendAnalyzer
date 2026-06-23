@@ -7,11 +7,11 @@ A Python-based command-line tool that enables natural language querying of AWS c
 - Natural language query interface for AWS cost data
 - Multi-LLM provider support (OpenAI, Anthropic, Bedrock, Ollama, Gemini)
 - AWS credential integration with profile support
-- Intelligent caching with TTL for performance
-- **Performance optimizations** with parallel query execution and compression
+- Intelligent caching with TTL
+- Data export to CSV and JSON
+- Cost optimization recommendations and anomaly detection
 - Rich terminal output formatting
 - Comprehensive error handling
-- Performance monitoring and metrics
 
 ## Installation
 
@@ -32,73 +32,15 @@ aws-cost-cli configure --provider ollama --model llama2
 aws-cost-cli list-profiles
 ```
 
-## Performance Optimizations
+## Choosing a Provider
 
-The CLI includes several performance optimization features for handling large queries and datasets:
-
-### Parallel Query Execution
-Large time range queries are automatically split into chunks and executed in parallel:
-
-```bash
-# This query will automatically use parallel execution for the full year
-aws-cost-cli query "Show me all AWS costs for 2024" --performance-metrics
-
-# Control parallel execution
-aws-cost-cli query "EC2 costs for 2024" --parallel --max-chunk-days 60
-aws-cost-cli query "S3 costs last month" --no-parallel
-```
-
-### Cache Compression
-Reduce cache storage requirements with automatic compression:
-
-```bash
-# Enable compression (default)
-aws-cost-cli query "RDS costs this year" --compression
-
-# Disable compression
-aws-cost-cli query "Lambda costs last month" --no-compression
-```
-
-### Performance Monitoring
-Track query performance and optimization effectiveness:
-
-```bash
-# Show performance metrics after query
-aws-cost-cli query "All services last quarter" --performance-metrics
-
-# View comprehensive performance statistics
-aws-cost-cli performance
-
-# View performance for specific time period
-aws-cost-cli performance --hours 48 --format json
-```
-
-**Example performance output:**
-```
-🚀 Performance Metrics:
-   Processing time: 1250.5ms
-   API calls made: 4
-   Parallel requests: 4
-   Cache hit: No
-   Compression ratio: 0.65
-   Space saved: 35.0%
-```
-
-## Performance Comparison Guide
-
-### Local vs Cloud Providers
-
-| Provider | Type | Speed | Privacy | Cost | Best For |
-|----------|------|-------|---------|------|----------|
-| **Ollama** | Local | Fast* | 🔒 Private | Free | Privacy-sensitive, offline use |
-| **Gemini** | Cloud | Very Fast | ☁️ Cloud | Low | Cost-effective cloud queries |
-| **OpenAI** | Cloud | Fast | ☁️ Cloud | Medium | Reliable, consistent results |
-| **Anthropic** | Cloud | Medium | ☁️ Cloud | Medium | Complex analysis, safety |
-| **Bedrock** | AWS | Medium | ☁️ AWS | Variable | AWS-native integration |
-
-*Speed depends on local hardware and model size
-
-### Performance Recommendations
+| Provider | Type | Privacy | Cost | Best For |
+|----------|------|---------|------|----------|
+| **Ollama** | Local | 🔒 Private | Free | Privacy-sensitive, offline use |
+| **Gemini** | Cloud | ☁️ Cloud | Low | Cost-effective cloud queries |
+| **OpenAI** | Cloud | ☁️ Cloud | Medium | Reliable, consistent results |
+| **Anthropic** | Cloud | ☁️ Cloud | Medium | Complex analysis, safety |
+| **Bedrock** | AWS | ☁️ AWS | Variable | AWS-native integration |
 
 **For Privacy & Offline Use:**
 ```bash
@@ -106,15 +48,15 @@ aws-cost-cli performance --hours 48 --format json
 aws-cost-cli configure --provider ollama --model llama2
 ```
 
-**For Speed & Cost Efficiency:**
+**For Cost Efficiency:**
 ```bash
-# Use Gemini - fastest cloud provider, lowest cost
+# Use Gemini - cost-effective cloud provider
 aws-cost-cli configure --provider gemini --model gemini-1.5-flash
 ```
 
 **For Complex Analysis:**
 ```bash
-# Use Anthropic Claude - best for detailed cost analysis
+# Use Anthropic Claude - good for detailed cost analysis
 aws-cost-cli configure --provider anthropic --model claude-3-haiku-20240307
 ```
 
@@ -123,8 +65,6 @@ aws-cost-cli configure --provider anthropic --model claude-3-haiku-20240307
 # Use Bedrock - leverages existing AWS credentials
 aws-cost-cli configure --provider bedrock --region us-east-1
 ```
-
-For detailed performance optimization guidance, see [docs/PERFORMANCE_GUIDE.md](docs/PERFORMANCE_GUIDE.md).
 
 ## Provider Switching
 
@@ -145,14 +85,17 @@ aws-cost-cli query "EC2 costs last month" --llm-provider bedrock   # AWS-native
 
 ```bash
 # List all providers and their configuration status
-aws-cost-cli list-providers
+aws-cost-cli providers list
 
 # Test specific provider configuration
-aws-cost-cli test-provider gemini
-aws-cost-cli test-provider ollama
+aws-cost-cli providers test gemini
+aws-cost-cli providers test ollama
+
+# Check provider health
+aws-cost-cli providers health
 
 # Check current configuration
-aws-cost-cli config show
+aws-cost-cli show-config
 ```
 
 ### Automatic Fallback
@@ -393,7 +336,7 @@ Check your environment variables:
 
 ```bash
 # Verify API keys are set (masked output for security)
-aws-cost-cli config show
+aws-cost-cli show-config
 
 # Test configuration
 aws-cost-cli test
@@ -418,7 +361,7 @@ aws-cost-cli test
    ```
 4. Test the provider:
    ```bash
-   aws-cost-cli test-provider gemini
+   aws-cost-cli providers test gemini
    ```
 
 **Problem:** "google-generativeai package not installed" error
@@ -508,7 +451,7 @@ pip install google-generativeai>=0.3.0
    ```
 3. Test the provider:
    ```bash
-   aws-cost-cli test-provider openai
+   aws-cost-cli providers test openai
    ```
 
 #### Anthropic Issues
@@ -522,7 +465,7 @@ pip install google-generativeai>=0.3.0
    ```
 3. Test the provider:
    ```bash
-   aws-cost-cli test-provider anthropic
+   aws-cost-cli providers test anthropic
    ```
 
 #### Bedrock Issues
@@ -538,7 +481,7 @@ pip install google-generativeai>=0.3.0
    - `bedrock:ListFoundationModels`
 3. Test the provider:
    ```bash
-   aws-cost-cli test-provider bedrock
+   aws-cost-cli providers test bedrock
    ```
 
 ### Provider Switching Issues
@@ -551,27 +494,27 @@ pip install google-generativeai>=0.3.0
    ```
 2. Verify provider is configured:
    ```bash
-   aws-cost-cli list-providers
+   aws-cost-cli providers list
    ```
 3. Test specific provider:
    ```bash
-   aws-cost-cli test-provider gemini
+   aws-cost-cli providers test gemini
    ```
 
 **Problem:** Fallback not working
 **Solution:**
 1. Check fallback configuration:
    ```bash
-   aws-cost-cli config show
+   aws-cost-cli show-config
    ```
 2. Ensure fallback providers are configured:
    ```bash
-   aws-cost-cli list-providers
+   aws-cost-cli providers list
    ```
 3. Test fallback providers individually:
    ```bash
-   aws-cost-cli test-provider ollama
-   aws-cost-cli test-provider openai
+   aws-cost-cli providers test ollama
+   aws-cost-cli providers test openai
    ```
 
 ### General Issues
@@ -580,7 +523,7 @@ pip install google-generativeai>=0.3.0
 **Solution:**
 1. Check provider status:
    ```bash
-   aws-cost-cli list-providers
+   aws-cost-cli providers list
    ```
 2. Configure at least one provider:
    ```bash
@@ -601,10 +544,7 @@ pip install google-generativeai>=0.3.0
    ```bash
    aws-cost-cli configure --provider gemini
    ```
-3. Enable performance optimizations:
-   ```bash
-   aws-cost-cli query "costs" --parallel --compression
-   ```
+3. Reuse cached results for repeated queries (the cache is enabled by default; use `--fresh` only when you need new data)
 
 **Problem:** Inconsistent results between providers
 **Solution:**
@@ -620,9 +560,9 @@ pip install google-generativeai>=0.3.0
 
 If you're still having issues:
 
-1. Run a comprehensive health check:
+1. Run a health check:
    ```bash
-   aws-cost-cli health check --detailed
+   aws-cost-cli health
    ```
 
 2. Check the logs for detailed error messages

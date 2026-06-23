@@ -6,15 +6,14 @@ This comprehensive guide will help you master the AWS Cost Explorer CLI tool and
 
 1. [Getting Started](#getting-started)
 2. [Installation and Setup](#installation-and-setup)
-3. [Health Monitoring and System Status](#health-monitoring-and-system-status)
+3. [Health Checks and System Status](#health-checks-and-system-status)
 4. [Basic Query Patterns](#basic-query-patterns)
 5. [Service-Specific Examples](#service-specific-examples)
 6. [Time-Based Analysis](#time-based-analysis)
 7. [Advanced Query Techniques](#advanced-query-techniques)
 8. [Configuration and Optimization](#configuration-and-optimization)
-9. [Enterprise Deployment](#enterprise-deployment)
-10. [Troubleshooting](#troubleshooting)
-11. [Best Practices](#best-practices)
+9. [Troubleshooting](#troubleshooting)
+10. [Best Practices](#best-practices)
 
 ## Getting Started
 
@@ -42,36 +41,17 @@ This basic query will:
 
 ## Installation and Setup
 
-### Standard Installation
-
-For basic usage and development:
+### Installation
 
 ```bash
 # Install the package with core dependencies
 uv pip install -e .
 
-# Or install with development tools
+# Or install with development tools (pytest, black, flake8, mypy)
 uv pip install -e .[dev]
 ```
 
-### Production Installation
-
-For production deployments, use the production-optimized dependencies:
-
-```bash
-# Install production dependencies for better performance
-uv pip install -r requirements-prod.txt
-
-# Then install the main package
-uv pip install -e .
-```
-
-**Production dependencies include:**
-- High-performance ASGI/WSGI servers (uvicorn, gunicorn)
-- Enhanced logging and monitoring tools
-- Database drivers (PostgreSQL, Redis)
-- Security and SSL/TLS support
-- Process management tools
+Core dependencies are boto3, click, rich, pyyaml, openai, anthropic, google-generativeai, and requests.
 
 ## LLM Provider Configuration
 
@@ -122,7 +102,7 @@ export GEMINI_API_KEY="your-api-key-here"
 aws-cost-cli configure --provider gemini --model gemini-1.5-flash
 
 # Test configuration
-aws-cost-cli test-provider gemini
+aws-cost-cli providers test gemini
 
 # Verify API key is working
 aws-cost-cli query "test query" --llm-provider gemini
@@ -172,7 +152,7 @@ export OPENAI_API_KEY="sk-your-key-here"
 aws-cost-cli configure --provider openai --model gpt-3.5-turbo
 
 # Test configuration
-aws-cost-cli test-provider openai
+aws-cost-cli providers test openai
 ```
 
 ### 4. Anthropic Claude
@@ -188,7 +168,7 @@ export ANTHROPIC_API_KEY="sk-ant-your-key-here"
 aws-cost-cli configure --provider anthropic --model claude-3-haiku-20240307
 
 # Test configuration
-aws-cost-cli test-provider anthropic
+aws-cost-cli providers test anthropic
 ```
 
 ### 5. AWS Bedrock
@@ -204,26 +184,26 @@ aws configure
 aws-cost-cli configure --provider bedrock --region us-east-1
 
 # Test configuration
-aws-cost-cli test-provider bedrock
+aws-cost-cli providers test bedrock
 ```
 
 ### Provider Management Commands
 
 ```bash
 # List all providers and their status
-aws-cost-cli list-providers
+aws-cost-cli providers list
 
 # Test specific provider
-aws-cost-cli test-provider gemini
-aws-cost-cli test-provider ollama
-aws-cost-cli test-provider openai
+aws-cost-cli providers test gemini
+aws-cost-cli providers test ollama
+aws-cost-cli providers test openai
 
 # Override provider for single query (doesn't change config)
 aws-cost-cli query "EC2 costs" --llm-provider gemini
 aws-cost-cli query "EC2 costs" --llm-provider ollama
 
 # Check current configuration
-aws-cost-cli config show
+aws-cost-cli show-config
 
 # Change default provider permanently
 aws-cost-cli configure --provider gemini
@@ -260,9 +240,9 @@ time aws-cost-cli query "EC2 costs last month" --llm-provider gemini
 time aws-cost-cli query "EC2 costs last month" --llm-provider openai
 
 # Test provider availability
-aws-cost-cli test-provider ollama && echo "Ollama: Available"
-aws-cost-cli test-provider gemini && echo "Gemini: Available"
-aws-cost-cli test-provider openai && echo "OpenAI: Available"
+aws-cost-cli providers test ollama && echo "Ollama: Available"
+aws-cost-cli providers test gemini && echo "Gemini: Available"
+aws-cost-cli providers test openai && echo "OpenAI: Available"
 ```
 
 **Batch Provider Testing:**
@@ -271,7 +251,7 @@ aws-cost-cli test-provider openai && echo "OpenAI: Available"
 # Test all configured providers
 for provider in ollama gemini openai anthropic bedrock; do
   echo "Testing $provider..."
-  aws-cost-cli test-provider $provider
+  aws-cost-cli providers test $provider
 done
 
 # Find fastest provider for your setup
@@ -316,19 +296,16 @@ aws-cost-cli query "RDS costs" --format json
 # With AWS profile
 aws-cost-cli query "Lambda costs" --profile production
 
-# With performance options
-aws-cost-cli query "All costs 2024" --parallel --compression --performance-metrics
+# With fresh data (bypass cache)
+aws-cost-cli query "All costs 2024" --fresh
 ```
 
 **Query Command Options:**
 - `--llm-provider`: Override LLM provider (ollama, gemini, openai, anthropic, bedrock)
 - `--format`: Output format (simple, rich, json, llm)
-- `--profile`: AWS profile to use
-- `--parallel`: Enable parallel query execution
-- `--no-parallel`: Disable parallel execution
-- `--compression`: Enable cache compression
-- `--no-compression`: Disable cache compression
-- `--performance-metrics`: Show performance metrics after query
+- `--profile` / `-p`: AWS profile to use
+- `--fresh` / `-f`: Force fresh data retrieval, bypassing the cache
+- `--config-file` / `-c`: Path to a configuration file
 
 #### Configuration Commands
 
@@ -345,58 +322,58 @@ aws-cost-cli configure --profile production
 # Configure cache settings
 aws-cost-cli configure --cache-ttl 3600
 
-# Show current configuration
-aws-cost-cli config show
-
-# Validate configuration
-aws-cost-cli config validate
+# Show current configuration (API keys masked)
+aws-cost-cli show-config
 ```
 
 #### Provider Management Commands
 
 ```bash
 # List all providers and their status
-aws-cost-cli list-providers
+aws-cost-cli providers list
 
-# Test specific provider
-aws-cost-cli test-provider gemini
-aws-cost-cli test-provider ollama
+# Test a specific provider
+aws-cost-cli providers test gemini
+aws-cost-cli providers test ollama
 
-# Test all providers
+# Check provider health
+aws-cost-cli providers health
+
+# View LLM provider performance metrics
+aws-cost-cli providers performance
+
+# Reset provider performance metrics
+aws-cost-cli providers reset
+
+# Test the configured provider end to end
 aws-cost-cli test
 ```
 
-#### Health and Monitoring Commands
+#### Health Command
 
 ```bash
-# Basic health check
-aws-cost-cli health check
+# One-shot health check (AWS credentials + cache directory)
+aws-cost-cli health
 
-# Detailed health check
-aws-cost-cli health check --detailed
-
-# Readiness check (for containers)
-aws-cost-cli health ready
-
-# Start health check server
-aws-cost-cli health serve --port 8081
-
-# Performance monitoring
-aws-cost-cli performance
-aws-cost-cli performance --hours 24 --format json
+# JSON output for monitoring systems
+aws-cost-cli health --json
 ```
 
 #### Cache Management Commands
 
 ```bash
-# Show cache status
-aws-cost-cli cache status
+# Show cache statistics
+aws-cost-cli cache-stats
 
-# Clear cache
-aws-cost-cli cache clear
+# Pre-warm the cache with common queries
+aws-cost-cli warm-cache
 
-# Clear cache for specific queries
-aws-cost-cli cache clear --pattern "EC2*"
+# Remove expired cache entries
+aws-cost-cli cleanup-cache
+
+# Clear the cache (optionally by pattern)
+aws-cost-cli clear-cache
+aws-cost-cli clear-cache --pattern "EC2*"
 ```
 
 #### Profile Management Commands
@@ -405,8 +382,8 @@ aws-cost-cli cache clear --pattern "EC2*"
 # List AWS profiles
 aws-cost-cli list-profiles
 
-# Set default profile
-aws-cost-cli configure --default-profile production
+# Use a specific profile for a query
+aws-cost-cli query "EC2 costs last month" --profile production
 ```
 
 ### Command Examples by Use Case
@@ -430,8 +407,8 @@ aws-cost-cli query "Am I on track for my monthly AWS budget of $5000?"
 # Service breakdown
 aws-cost-cli query "What are my top 10 AWS services by cost this month?"
 
-# Cost trends
-aws-cost-cli query "Show me monthly cost trends for the last 6 months"
+# Monthly breakdown
+aws-cost-cli query "Show me monthly costs for the last 6 months"
 
 # Optimization opportunities
 aws-cost-cli query "What are my biggest cost optimization opportunities?"
@@ -460,18 +437,15 @@ aws-cost-cli query "Cross-account cost analysis" --llm-provider bedrock
 
 ```bash
 # Test system health
-aws-cost-cli health check --detailed
+aws-cost-cli health
 
 # Test all providers
 for provider in ollama gemini openai anthropic bedrock; do
   echo "Testing $provider..."
-  aws-cost-cli test-provider $provider
+  aws-cost-cli providers test $provider
 done
 
-# Debug query issues
-aws-cost-cli query "test query" --debug --llm-provider gemini
-
-# Performance comparison
+# Compare provider response times
 time aws-cost-cli query "EC2 costs" --llm-provider ollama
 time aws-cost-cli query "EC2 costs" --llm-provider gemini
 ```
@@ -499,34 +473,18 @@ The CLI returns standard exit codes for scripting:
 - `4`: Cache error (disk space, permissions)
 - `5`: Health check failure (system unhealthy)
 
-### Development vs Production Dependencies
+## Health Checks and System Status
 
-| Dependency Type | Development | Production |
-|----------------|-------------|------------|
-| **Core Features** | ✅ Basic functionality | ✅ All features + optimizations |
-| **Performance** | Standard | High-performance servers & pooling |
-| **Monitoring** | Basic logging | Structured logging + metrics |
-| **Database** | File-based cache | PostgreSQL + Redis support |
-| **Security** | Standard | Enhanced SSL/TLS + encryption |
-| **Deployment** | Local development | Production-ready servers |
+The CLI includes a one-shot `health` command for quick diagnostics.
 
-## Health Monitoring and System Status
-
-The CLI includes comprehensive health monitoring capabilities for production deployments and troubleshooting.
-
-### Basic Health Checks
-
-Check the overall system health:
+### Running a Health Check
 
 ```bash
-# Quick health check
-aws-cost-cli health check
-
-# Detailed health check with system metrics
-aws-cost-cli health check --detailed
+# Check AWS credentials and cache directory
+aws-cost-cli health
 
 # JSON output for monitoring systems
-aws-cost-cli health check --json
+aws-cost-cli health --json
 ```
 
 **Example output:**
@@ -534,106 +492,24 @@ aws-cost-cli health check --json
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ ✅ System Status: HEALTHY                                                      ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Component     ┃ Status     ┃ Details                                                          ┃
-┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ System        │ ✅ healthy │ OK                                                               │
-│ Aws           │ ✅ healthy │ Response: 245ms                                                  │
-│ Cache         │ ✅ healthy │ Size: 15.2MB; Response: 2ms                                     │
-│ Llm           │ ✅ healthy │ OK                                                               │
-└───────────────┴────────────┴──────────────────────────────────────────────────────────────┘
-
-📊 Summary: 4/4 checks healthy
-⏱️  Uptime: 45.2 seconds
-```
-
-### Readiness Checks
-
-For container orchestration and load balancers:
-
-```bash
-# Check if application is ready to serve requests
-aws-cost-cli health ready
-
-# JSON output for Kubernetes probes
-aws-cost-cli health ready --json
-```
-
-### Health Check Server
-
-Start an HTTP server for monitoring endpoints (ideal for containers):
-
-```bash
-# Start health check server
-aws-cost-cli health serve --port 8081
-
-# Bind to specific host
-aws-cost-cli health serve --host 0.0.0.0 --port 8081
-```
-
-**Available endpoints:**
-- `GET /health` - Basic health check
-- `GET /health/detailed` - Detailed health with metrics
-- `GET /ready` - Readiness probe
-- `GET /metrics` - Prometheus metrics
-
-### Monitoring Integration
-
-#### Docker/Kubernetes Health Checks
-
-```yaml
-# Kubernetes deployment example
-spec:
-  containers:
-  - name: aws-cost-cli
-    image: your-registry/aws-cost-cli:latest
-    ports:
-    - containerPort: 8081
-    livenessProbe:
-      httpGet:
-        path: /health
-        port: 8081
-      initialDelaySeconds: 30
-      periodSeconds: 10
-    readinessProbe:
-      httpGet:
-        path: /ready
-        port: 8081
-      initialDelaySeconds: 5
-      periodSeconds: 5
-```
-
-#### Prometheus Monitoring
-
-```yaml
-# Prometheus scrape config
-scrape_configs:
-  - job_name: 'aws-cost-cli'
-    static_configs:
-      - targets: ['your-service:8081']
-    metrics_path: '/metrics'
-    scrape_interval: 30s
+  ✅ aws: AWS credentials valid
+  ✅ cache: Cache directory writable
 ```
 
 ### Health Check Components
 
-The health monitoring system checks:
+The `health` command verifies:
 
 | Component | Description | Healthy State |
 |-----------|-------------|---------------|
-| **System** | CPU, memory, disk usage | < 80% utilization |
-| **AWS** | API connectivity and permissions | < 1s response time |
-| **Cache** | File system access and performance | Read/write operations work |
-| **LLM** | Provider API key availability | API keys configured |
-| **Database** | Connection and query performance | < 100ms queries |
+| **AWS** | Credential validity and Cost Explorer access | Credentials valid |
+| **Cache** | Cache directory access | Read/write operations work |
 
-### Status Codes
+### Exit Codes
 
-Health check commands return appropriate exit codes:
+The `health` command returns:
 - `0` - Healthy
-- `1` - Unhealthy (critical issues)
-- `2` - Degraded (warnings, but functional)
+- `1` - Unhealthy (one or more checks failed)
 
 ## Basic Query Patterns
 
@@ -882,8 +758,8 @@ aws-cost-cli query "How much have I spent on AWS this month so far?"
 # Month-over-month comparison
 aws-cost-cli query "Compare this month's AWS spending to last month"
 
-# Monthly spending trend
-aws-cost-cli query "Show my monthly AWS spending trend for the last 12 months"
+# Monthly spending breakdown
+aws-cost-cli query "Show my monthly AWS spending for the last 12 months"
 
 # Seasonal spending patterns
 aws-cost-cli query "What are my seasonal AWS spending patterns over the last 2 years?"
@@ -904,8 +780,8 @@ aws-cost-cli query "Compare Q4 2024 spending to Q3 2024"
 # Quarterly service breakdown
 aws-cost-cli query "Show me quarterly spending breakdown by service for 2024"
 
-# Quarterly cost trends
-aws-cost-cli query "What are the quarterly cost trends for my top 5 AWS services?"
+# Quarterly costs by service
+aws-cost-cli query "What were the quarterly costs for my top 5 AWS services in 2024?"
 ```
 
 ### Daily and Weekly Analysis
@@ -914,7 +790,7 @@ aws-cost-cli query "What are the quarterly cost trends for my top 5 AWS services
 # Daily spending patterns
 aws-cost-cli query "Show me daily AWS spending for the last 30 days"
 
-# Weekly spending trends
+# Weekly spending patterns
 aws-cost-cli query "What are my weekly AWS spending patterns this month?"
 
 # Weekend vs weekday costs
@@ -974,22 +850,6 @@ aws-cost-cli query "What are my EC2 right-sizing opportunities based on cost ana
 aws-cost-cli query "Were there any unusual cost spikes last month?"
 ```
 
-### Budget and Forecasting
-
-```bash
-# Cost forecasting
-aws-cost-cli query "Based on current trends, what will my AWS costs be next month?"
-
-# Budget variance analysis
-aws-cost-cli query "How does my actual spending compare to my $10000 monthly budget?"
-
-# Cost projection
-aws-cost-cli query "Project my annual AWS costs based on the last 6 months"
-
-# Service growth forecasting
-aws-cost-cli query "Which services are likely to drive cost growth next quarter?"
-```
-
 ## Enterprise Deployment
 
 The AWS Cost CLI provides enterprise-grade configuration templates and deployment options for large organizations.
@@ -1036,21 +896,14 @@ For production deployments:
 # Copy production template
 cp config/templates/production.yaml ~/.aws-cost-cli/config.yaml
 
-# Install production dependencies
-pip install -r requirements-prod.txt
-
 # Set required environment variables
-export AWS_COST_CLI_DB_PASSWORD="your-secure-password"
 export ANTHROPIC_API_KEY="your-anthropic-key"
 ```
 
 **Production template features:**
-- High-performance connection pooling (100+ connections)
-- PostgreSQL database integration
-- Comprehensive health checks and monitoring
-- Circuit breaker patterns for resilience
-- Structured JSON logging
-- Resource limits and security controls
+- Shorter cache TTL for fresher data
+- Stricter security settings
+- Structured logging
 
 ### Multi-Account Enterprise Setup
 
@@ -1117,17 +970,17 @@ export AWS_COST_CLI_DB_PASSWORD="your-db-password"
 After setting up your configuration:
 
 ```bash
-# Validate configuration syntax
-aws-cost-cli config validate
+# Review the loaded configuration (API keys masked)
+aws-cost-cli show-config
 
-# Test database connectivity (if enabled)
-aws-cost-cli config test-db
+# Test LLM provider connectivity
+aws-cost-cli providers test gemini
 
-# Test LLM provider connectivity  
-aws-cost-cli config test-llm
+# End-to-end test of the configured provider
+aws-cost-cli test
 
-# Comprehensive system test
-aws-cost-cli health check --detailed
+# Health check (AWS credentials + cache directory)
+aws-cost-cli health
 ```
 
 ### Security Best Practices
@@ -1175,116 +1028,24 @@ For production environments:
 
 #### Docker Example
 
+The CLI is a one-shot command-line tool, so a container typically runs a single query (for example, on a schedule) rather than a long-running service.
+
 ```dockerfile
 FROM python:3.11-slim
-
-# Install production dependencies
-COPY requirements-prod.txt .
-RUN pip install -r requirements-prod.txt
 
 # Install application
 COPY . /app
 WORKDIR /app
 RUN pip install -e .
 
-# Health check configuration
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s \
-  CMD aws-cost-cli health ready || exit 1
+# Optional: validate the image can reach AWS and the cache directory
+RUN aws-cost-cli health || true
 
-# Expose health check port
-EXPOSE 8081
-
-# Start health check server
-CMD ["aws-cost-cli", "health", "serve", "--host", "0.0.0.0", "--port", "8081"]
+# Run a query by default (override CMD as needed)
+CMD ["aws-cost-cli", "query", "What did I spend on AWS last month?"]
 ```
 
-#### Kubernetes Deployment
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: aws-cost-cli
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: aws-cost-cli
-  template:
-    metadata:
-      labels:
-        app: aws-cost-cli
-    spec:
-      containers:
-      - name: aws-cost-cli
-        image: your-registry/aws-cost-cli:latest
-        ports:
-        - containerPort: 8081
-        env:
-        - name: AWS_COST_CLI_DB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: aws-cost-cli-secrets
-              key: db-password
-        - name: ANTHROPIC_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: aws-cost-cli-secrets  
-              key: anthropic-api-key
-        - name: GEMINI_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: aws-cost-cli-secrets  
-              key: gemini-api-key
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8081
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8081
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
-```
-
-### Monitoring and Alerting
-
-#### Prometheus Integration
-
-```yaml
-# ServiceMonitor for Prometheus Operator
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: aws-cost-cli
-spec:
-  selector:
-    matchLabels:
-      app: aws-cost-cli
-  endpoints:
-  - port: health
-    path: /metrics
-    interval: 30s
-```
-
-#### Grafana Dashboard
-
-Key metrics to monitor:
-- Query response times
-- Cache hit ratios
-- AWS API call frequency
-- System resource usage
-- Error rates by component
+To run a scheduled query in Kubernetes, use a `CronJob` that invokes `aws-cost-cli query ...`, supplying AWS credentials and any provider API keys via secrets and environment variables.
 
 ## Configuration and Optimization
 
@@ -1305,10 +1066,10 @@ aws-cost-cli configure --default-profile production
 
 ```bash
 # Clear cache for fresh data
-aws-cost-cli cache clear
+aws-cost-cli clear-cache
 
-# Check cache status
-aws-cost-cli cache status
+# Check cache statistics
+aws-cost-cli cache-stats
 
 # Set custom cache TTL (in seconds)
 aws-cost-cli configure --cache-ttl 7200  # 2 hours
@@ -1327,9 +1088,9 @@ aws-cost-cli configure --provider openai     # Reliable cloud option
 aws-cost-cli configure --provider bedrock    # For AWS-native integration
 
 # Test LLM provider performance
-aws-cost-cli test-provider ollama    # Test local provider
-aws-cost-cli test-provider gemini    # Test Gemini provider
-aws-cost-cli test-provider openai    # Test OpenAI provider
+aws-cost-cli providers test ollama    # Test local provider
+aws-cost-cli providers test gemini    # Test Gemini provider
+aws-cost-cli providers test openai    # Test OpenAI provider
 
 # Override provider for single query
 aws-cost-cli query "EC2 costs last month" --llm-provider gemini
@@ -1339,17 +1100,14 @@ aws-cost-cli query "EC2 costs last month" --llm-provider gemini
 
 ### System Diagnostics
 
-Start troubleshooting with comprehensive health checks:
+Start troubleshooting with the health check:
 
 ```bash
-# Run comprehensive system health check
-aws-cost-cli health check --detailed
+# Run the health check
+aws-cost-cli health
 
-# Check if system is ready to serve requests  
-aws-cost-cli health ready
-
-# Get system status in JSON format for analysis
-aws-cost-cli health check --json
+# Get status in JSON format for analysis
+aws-cost-cli health --json
 ```
 
 ### Common Issues and Solutions
@@ -1357,18 +1115,14 @@ aws-cost-cli health check --json
 #### 1. System Health Issues
 
 ```bash
-# Check overall system health first
-aws-cost-cli health check
+# Check overall health first
+aws-cost-cli health
 
-# Identify specific component failures
-aws-cost-cli health check --detailed --json | jq '.checks'
-
-# Monitor system resources
-aws-cost-cli health check --detailed | grep -E "(cpu|memory|disk)"
+# Inspect individual check results
+aws-cost-cli health --json | jq '.checks'
 ```
 
 **Common system issues:**
-- **High CPU/Memory**: Reduce concurrent queries or increase system resources
 - **Cache issues**: Check disk space and permissions in `~/.aws-cost-cli/cache`
 - **Network connectivity**: Verify internet connection and firewall settings
 
@@ -1385,7 +1139,7 @@ aws-cost-cli list-profiles
 aws-cost-cli query "test query" --profile your-profile-name
 
 # Run health check to verify AWS connectivity
-aws-cost-cli health check | grep -i aws
+aws-cost-cli health | grep -i aws
 ```
 
 #### 3. LLM Provider Issues
@@ -1397,13 +1151,13 @@ aws-cost-cli health check | grep -i aws
 aws-cost-cli test
 
 # Check API key configuration
-aws-cost-cli config show
+aws-cost-cli show-config
 
 # List all providers and their status
-aws-cost-cli list-providers
+aws-cost-cli providers list
 
-# Check LLM provider status in health check
-aws-cost-cli health check | grep -i llm
+# Check LLM provider health
+aws-cost-cli providers health
 ```
 
 **Provider-Specific Troubleshooting:**
@@ -1424,7 +1178,7 @@ ollama list
 ollama pull llama2
 
 # Test Ollama provider
-aws-cost-cli test-provider ollama
+aws-cost-cli providers test ollama
 
 # Configure Ollama with specific model
 aws-cost-cli configure --provider ollama --model llama2
@@ -1450,7 +1204,7 @@ echo $GEMINI_API_KEY
 export GEMINI_API_KEY="your-api-key-here"
 
 # Test Gemini provider
-aws-cost-cli test-provider gemini
+aws-cost-cli providers test gemini
 
 # Configure Gemini
 aws-cost-cli configure --provider gemini --model gemini-1.5-flash
@@ -1475,7 +1229,7 @@ echo $OPENAI_API_KEY
 export OPENAI_API_KEY="sk-your-key-here"
 
 # Test OpenAI provider
-aws-cost-cli test-provider openai
+aws-cost-cli providers test openai
 
 # Configure OpenAI
 aws-cost-cli configure --provider openai --model gpt-3.5-turbo
@@ -1497,7 +1251,7 @@ echo $ANTHROPIC_API_KEY
 export ANTHROPIC_API_KEY="sk-ant-your-key-here"
 
 # Test Anthropic provider
-aws-cost-cli test-provider anthropic
+aws-cost-cli providers test anthropic
 
 # Configure Anthropic
 aws-cost-cli configure --provider anthropic --model claude-3-haiku-20240307
@@ -1515,7 +1269,7 @@ aws-cost-cli configure --provider anthropic --model claude-3-haiku-20240307
 aws sts get-caller-identity
 
 # Test Bedrock provider
-aws-cost-cli test-provider bedrock
+aws-cost-cli providers test bedrock
 
 # Configure Bedrock
 aws-cost-cli configure --provider bedrock --region us-east-1
@@ -1534,12 +1288,12 @@ aws bedrock list-foundation-models --region us-east-1
 
 ```bash
 # Test fallback configuration
-aws-cost-cli config show | grep -A5 fallback
+aws-cost-cli show-config | grep -A5 fallback
 
 # Test each fallback provider
-aws-cost-cli test-provider ollama
-aws-cost-cli test-provider gemini
-aws-cost-cli test-provider openai
+aws-cost-cli providers test ollama
+aws-cost-cli providers test gemini
+aws-cost-cli providers test openai
 
 # Force fallback by disabling primary provider
 aws-cost-cli query "test" --llm-provider nonexistent  # Should fallback
@@ -1598,7 +1352,7 @@ aws-cost-cli query "What services did I use last month that cost me money?"
 aws-cost-cli query "EC2 costs" --debug
 
 # Check configuration
-aws-cost-cli config show --debug
+aws-cost-cli show-config --debug
 
 # Test all components
 aws-cost-cli test --debug
@@ -1632,22 +1386,19 @@ aws-cost-cli query "How much have I spent on AWS today?"
 aws-cost-cli query "What was my AWS spending this week?"
 
 # Monthly review
-aws-cost-cli query "Show me monthly spending trends and top services"
+aws-cost-cli query "Show me monthly spending and top services"
 
 # Quarterly planning
-aws-cost-cli query "What are my quarterly cost trends and forecasts?"
+aws-cost-cli query "What were my quarterly costs by service this year?"
 ```
 
 #### System Health Monitoring
 ```bash
 # Daily health check (add to cron)
-aws-cost-cli health check --json > /var/log/aws-cost-cli-health.log
+aws-cost-cli health --json > /var/log/aws-cost-cli-health.log
 
-# Production monitoring with alerting
-aws-cost-cli health check || echo "Health check failed" | mail -s "AWS Cost CLI Alert" ops@company.com
-
-# Container readiness monitoring
-aws-cost-cli health ready || exit 1
+# Alert if the health check fails
+aws-cost-cli health || echo "Health check failed" | mail -s "AWS Cost CLI Alert" ops@company.com
 ```
 
 ### 4. Security and Privacy
@@ -1694,11 +1445,8 @@ export AWS_COST_CLI_LOG_LEVEL=DEBUG
 # Use production template for reliability
 cp config/templates/production.yaml ~/.aws-cost-cli/config.yaml
 
-# Install production dependencies
-pip install -r requirements-prod.txt
-
-# Configure health monitoring
-aws-cost-cli health serve --host 0.0.0.0 --port 8081 &
+# Verify the setup with a health check
+aws-cost-cli health
 ```
 
 #### Multi-Account Enterprise
@@ -1741,21 +1489,21 @@ aws-cost-cli query "Compare production vs development environment costs"
 ### 2. Financial Planning
 
 ```bash
-# Annual budget planning
-aws-cost-cli query "Based on growth trends, what should our AWS budget be for 2025?"
+# Annual spending review
+aws-cost-cli query "What was our total AWS spending for 2024 by service?"
 
 # Cost center analysis
 aws-cost-cli query "Show cost breakdown by business unit for financial reporting"
 
-# ROI analysis
-aws-cost-cli query "What are the cost trends for our revenue-generating services?"
+# Service cost analysis
+aws-cost-cli query "What are the monthly costs for our revenue-generating services?"
 ```
 
 ### 3. Compliance and Reporting
 
 ```bash
 # Monthly executive summary
-aws-cost-cli query "Create an executive summary of AWS costs and trends this month"
+aws-cost-cli query "Create an executive summary of AWS costs this month"
 
 # Audit trail
 aws-cost-cli query "Show detailed cost breakdown for compliance reporting"
