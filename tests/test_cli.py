@@ -8,6 +8,13 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from src.aws_cost_cli.cli import cli
+from src.aws_cost_cli.query_pipeline import QueryResult
+from src.aws_cost_cli.exceptions import (
+    AWSCredentialsError,
+    AWSPermissionsError,
+    AWSAPIError,
+    QueryParsingError,
+)
 from src.aws_cost_cli.models import (
     CostData,
     CostResult,
@@ -53,182 +60,119 @@ class TestCLI:
             output_format="simple",
         )
 
-    @patch("src.aws_cost_cli.cli.ConfigManager")
-    @patch("src.aws_cost_cli.cli.CredentialManager")
-    @patch("src.aws_cost_cli.cli.AWSCostClient")
-    @patch("src.aws_cost_cli.cli.CacheManager")
-    @patch("src.aws_cost_cli.cli.QueryParser")
-    @patch("src.aws_cost_cli.cli.ResponseGenerator")
-    def test_query_command_success(
-        self,
-        mock_response_gen,
-        mock_query_parser,
-        mock_cache_manager,
-        mock_aws_client,
-        mock_credential_manager,
-        mock_config_manager,
-    ):
+    # The ``query`` command delegates the full flow (credentials, parsing,
+    # fetching, formatting) to ``QueryPipeline``. These tests therefore mock the
+    # pipeline and assert how the CLI renders the resulting ``QueryResult`` --
+    # matching the provider-override tests below. (They previously mocked the
+    # pre-pipeline orchestration directly, including a ``cli.ResponseGenerator``
+    # symbol that no longer exists.)
+
+    def _success_result(self, formatted_response="Test response", **kwargs):
+        """Build a successful QueryResult for the pipeline mock."""
+        return QueryResult(
+            success=True,
+            cost_data=self.cost_data,
+            formatted_response=formatted_response,
+            metadata={"original_query": "test"},
+            processing_time_ms=12.3,
+            **kwargs,
+        )
+
+    @patch("src.aws_cost_cli.cli.QueryPipeline")
+    def test_query_command_success(self, mock_pipeline):
         """Test successful query command execution."""
-        # Setup mocks
-        mock_config_manager.return_value.load_config.return_value = self.config
-        mock_credential_manager.return_value.validate_credentials.return_value = True
-        mock_aws_client.return_value.validate_permissions.return_value = True
-        mock_aws_client.return_value.get_cost_and_usage.return_value = self.cost_data
-        mock_query_parser.return_value.parse_query.return_value = self.query_params
-        mock_query_parser.return_value.validate_parameters.return_value = True
-        mock_cache_manager.return_value.get_cached_data.return_value = None
-        mock_cache_manager.return_value.generate_cache_key.return_value = "test-key"
-        mock_response_gen.return_value.format_response.return_value = "Test response"
+        mock_pipeline.return_value.config = self.config
+        mock_pipeline.return_value.process_query.return_value = self._success_result(
+            "Test response"
+        )
 
         result = self.runner.invoke(cli, ["query", "How much did I spend on EC2?"])
 
         assert result.exit_code == 0
         assert "Test response" in result.output
-        mock_aws_client.return_value.get_cost_and_usage.assert_called_once()
+        mock_pipeline.return_value.process_query.assert_called_once()
 
-    @patch("src.aws_cost_cli.cli.ConfigManager")
-    @patch("src.aws_cost_cli.cli.CredentialManager")
-    def test_query_command_invalid_credentials(
-        self, mock_credential_manager, mock_config_manager
-    ):
+    @patch("src.aws_cost_cli.cli.QueryPipeline")
+    def test_query_command_invalid_credentials(self, mock_pipeline):
         """Test query command with invalid credentials."""
-        mock_config_manager.return_value.load_config.return_value = self.config
-        mock_credential_manager.return_value.validate_credentials.return_value = False
+        mock_pipeline.return_value.config = self.config
+        mock_pipeline.return_value.process_query.return_value = QueryResult(
+            success=False, error=AWSCredentialsError(), metadata={}
+        )
 
         result = self.runner.invoke(cli, ["query", "How much did I spend on EC2?"])
 
         assert result.exit_code == 1
         assert "AWS credentials not found or invalid" in result.output
 
-    @patch("src.aws_cost_cli.cli.ConfigManager")
-    @patch("src.aws_cost_cli.cli.CredentialManager")
-    @patch("src.aws_cost_cli.cli.AWSCostClient")
-    def test_query_command_insufficient_permissions(
-        self, mock_aws_client, mock_credential_manager, mock_config_manager
-    ):
+    @patch("src.aws_cost_cli.cli.QueryPipeline")
+    def test_query_command_insufficient_permissions(self, mock_pipeline):
         """Test query command with insufficient permissions."""
-        mock_config_manager.return_value.load_config.return_value = self.config
-        mock_credential_manager.return_value.validate_credentials.return_value = True
-        mock_aws_client.return_value.validate_permissions.return_value = False
+        mock_pipeline.return_value.config = self.config
+        mock_pipeline.return_value.process_query.return_value = QueryResult(
+            success=False, error=AWSPermissionsError(), metadata={}
+        )
 
         result = self.runner.invoke(cli, ["query", "How much did I spend on EC2?"])
 
         assert result.exit_code == 1
         assert "Insufficient AWS permissions" in result.output
 
-    @patch("src.aws_cost_cli.cli.ConfigManager")
-    @patch("src.aws_cost_cli.cli.CredentialManager")
-    @patch("src.aws_cost_cli.cli.AWSCostClient")
-    @patch("src.aws_cost_cli.cli.CacheManager")
-    @patch("src.aws_cost_cli.cli.QueryParser")
-    def test_query_command_parse_error(
-        self,
-        mock_query_parser,
-        mock_cache_manager,
-        mock_aws_client,
-        mock_credential_manager,
-        mock_config_manager,
-    ):
+    @patch("src.aws_cost_cli.cli.QueryPipeline")
+    def test_query_command_parse_error(self, mock_pipeline):
         """Test query command with query parsing error."""
-        mock_config_manager.return_value.load_config.return_value = self.config
-        mock_credential_manager.return_value.validate_credentials.return_value = True
-        mock_aws_client.return_value.validate_permissions.return_value = True
-        mock_query_parser.return_value.parse_query.side_effect = Exception(
-            "Parse error"
+        mock_pipeline.return_value.config = self.config
+        mock_pipeline.return_value.process_query.return_value = QueryResult(
+            success=False,
+            error=QueryParsingError(original_query="Invalid query"),
+            metadata={},
         )
+        # handle_ambiguous_query is called for QueryParsingError to print tips
+        mock_pipeline.return_value.handle_ambiguous_query.return_value = []
 
         result = self.runner.invoke(cli, ["query", "Invalid query"])
 
         assert result.exit_code == 1
         assert "Failed to parse query" in result.output
 
-    @patch("src.aws_cost_cli.cli.ConfigManager")
-    @patch("src.aws_cost_cli.cli.CredentialManager")
-    @patch("src.aws_cost_cli.cli.AWSCostClient")
-    @patch("src.aws_cost_cli.cli.CacheManager")
-    @patch("src.aws_cost_cli.cli.QueryParser")
-    def test_query_command_aws_api_error(
-        self,
-        mock_query_parser,
-        mock_cache_manager,
-        mock_aws_client,
-        mock_credential_manager,
-        mock_config_manager,
-    ):
+    @patch("src.aws_cost_cli.cli.QueryPipeline")
+    def test_query_command_aws_api_error(self, mock_pipeline):
         """Test query command with AWS API error."""
-        mock_config_manager.return_value.load_config.return_value = self.config
-        mock_credential_manager.return_value.validate_credentials.return_value = True
-        mock_aws_client.return_value.validate_permissions.return_value = True
-        mock_query_parser.return_value.parse_query.return_value = self.query_params
-        mock_query_parser.return_value.validate_parameters.return_value = True
-        mock_cache_manager.return_value.get_cached_data.return_value = None
-        mock_cache_manager.return_value.generate_cache_key.return_value = "test-key"
-        mock_aws_client.return_value.get_cost_and_usage.side_effect = Exception(
-            "AWS API Error"
+        mock_pipeline.return_value.config = self.config
+        mock_pipeline.return_value.process_query.return_value = QueryResult(
+            success=False,
+            error=AWSAPIError("Failed to fetch cost data: AWS API Error"),
+            metadata={},
         )
 
         result = self.runner.invoke(cli, ["query", "How much did I spend on EC2?"])
 
         assert result.exit_code == 1
-        assert "Failed to fetch AWS cost data" in result.output
+        assert "Failed to fetch cost data" in result.output
 
-    @patch("src.aws_cost_cli.cli.ConfigManager")
-    @patch("src.aws_cost_cli.cli.CredentialManager")
-    @patch("src.aws_cost_cli.cli.AWSCostClient")
-    @patch("src.aws_cost_cli.cli.CacheManager")
-    @patch("src.aws_cost_cli.cli.QueryParser")
-    @patch("src.aws_cost_cli.cli.ResponseGenerator")
-    def test_query_command_with_cache(
-        self,
-        mock_response_gen,
-        mock_query_parser,
-        mock_cache_manager,
-        mock_aws_client,
-        mock_credential_manager,
-        mock_config_manager,
-    ):
+    @patch("src.aws_cost_cli.cli.QueryPipeline")
+    def test_query_command_with_cache(self, mock_pipeline):
         """Test query command using cached data."""
-        mock_config_manager.return_value.load_config.return_value = self.config
-        mock_credential_manager.return_value.validate_credentials.return_value = True
-        mock_aws_client.return_value.validate_permissions.return_value = True
-        mock_query_parser.return_value.parse_query.return_value = self.query_params
-        mock_query_parser.return_value.validate_parameters.return_value = True
-        mock_cache_manager.return_value.get_cached_data.return_value = self.cost_data
-        mock_cache_manager.return_value.generate_cache_key.return_value = "test-key"
-        mock_response_gen.return_value.format_response.return_value = "Cached response"
+        mock_pipeline.return_value.config = self.config
+        mock_pipeline.return_value.process_query.return_value = self._success_result(
+            "Cached response", cache_hit=True
+        )
 
         result = self.runner.invoke(cli, ["query", "How much did I spend on EC2?"])
 
         assert result.exit_code == 0
-        assert "Using cached data" in result.output
         assert "Cached response" in result.output
-        # AWS client should not be called when using cache
-        mock_aws_client.return_value.get_cost_and_usage.assert_not_called()
+        # Cache is enabled (not fresh) so the pipeline receives fresh_data=False.
+        context = mock_pipeline.return_value.process_query.call_args[0][0]
+        assert context.fresh_data is False
 
-    @patch("src.aws_cost_cli.cli.ConfigManager")
-    @patch("src.aws_cost_cli.cli.CredentialManager")
-    @patch("src.aws_cost_cli.cli.AWSCostClient")
-    @patch("src.aws_cost_cli.cli.CacheManager")
-    @patch("src.aws_cost_cli.cli.QueryParser")
-    @patch("src.aws_cost_cli.cli.ResponseGenerator")
-    def test_query_command_fresh_flag(
-        self,
-        mock_response_gen,
-        mock_query_parser,
-        mock_cache_manager,
-        mock_aws_client,
-        mock_credential_manager,
-        mock_config_manager,
-    ):
+    @patch("src.aws_cost_cli.cli.QueryPipeline")
+    def test_query_command_fresh_flag(self, mock_pipeline):
         """Test query command with fresh flag bypassing cache."""
-        mock_config_manager.return_value.load_config.return_value = self.config
-        mock_credential_manager.return_value.validate_credentials.return_value = True
-        mock_aws_client.return_value.validate_permissions.return_value = True
-        mock_aws_client.return_value.get_cost_and_usage.return_value = self.cost_data
-        mock_query_parser.return_value.parse_query.return_value = self.query_params
-        mock_query_parser.return_value.validate_parameters.return_value = True
-        mock_cache_manager.return_value.generate_cache_key.return_value = "test-key"
-        mock_response_gen.return_value.format_response.return_value = "Fresh response"
+        mock_pipeline.return_value.config = self.config
+        mock_pipeline.return_value.process_query.return_value = self._success_result(
+            "Fresh response", cache_hit=False
+        )
 
         result = self.runner.invoke(
             cli, ["query", "How much did I spend on EC2?", "--fresh"]
@@ -236,43 +180,25 @@ class TestCLI:
 
         assert result.exit_code == 0
         assert "Fresh response" in result.output
-        # Cache should not be checked when fresh flag is used
-        mock_cache_manager.return_value.get_cached_data.assert_not_called()
-        mock_aws_client.return_value.get_cost_and_usage.assert_called_once()
+        # The --fresh flag must be propagated to the pipeline as fresh_data=True.
+        context = mock_pipeline.return_value.process_query.call_args[0][0]
+        assert context.fresh_data is True
 
-    @patch("src.aws_cost_cli.cli.ConfigManager")
-    @patch("src.aws_cost_cli.cli.CredentialManager")
-    @patch("src.aws_cost_cli.cli.AWSCostClient")
-    @patch("src.aws_cost_cli.cli.CacheManager")
-    @patch("src.aws_cost_cli.cli.QueryParser")
-    def test_query_command_json_output(
-        self,
-        mock_query_parser,
-        mock_cache_manager,
-        mock_aws_client,
-        mock_credential_manager,
-        mock_config_manager,
-    ):
+    @patch("src.aws_cost_cli.cli.QueryPipeline")
+    def test_query_command_json_output(self, mock_pipeline):
         """Test query command with JSON output format."""
         config = Config(
             llm_provider="openai",
             llm_config={"provider": "openai", "api_key": "test-key"},
             output_format="json",
         )
-
-        mock_config_manager.return_value.load_config.return_value = config
-        mock_credential_manager.return_value.validate_credentials.return_value = True
-        mock_aws_client.return_value.validate_permissions.return_value = True
-        mock_aws_client.return_value.get_cost_and_usage.return_value = self.cost_data
-        mock_query_parser.return_value.parse_query.return_value = self.query_params
-        mock_query_parser.return_value.validate_parameters.return_value = True
-        mock_cache_manager.return_value.get_cached_data.return_value = None
-        mock_cache_manager.return_value.generate_cache_key.return_value = "test-key"
+        mock_pipeline.return_value.config = config
+        mock_pipeline.return_value.process_query.return_value = self._success_result()
 
         result = self.runner.invoke(cli, ["query", "How much did I spend on EC2?"])
 
         assert result.exit_code == 0
-        # Should output valid JSON
+        # Should output valid JSON (no rich panels/headers around it)
         output_data = json.loads(result.output)
         assert "query" in output_data
         assert "total_cost" in output_data

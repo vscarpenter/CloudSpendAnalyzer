@@ -1352,10 +1352,15 @@ def optimize(
         if not credential_manager.validate_credentials(profile):
             raise AWSCredentialsError(profile=profile)
 
-        console.print("🔍 Analyzing AWS costs for optimization opportunities...")
-        console.print(f"📅 Analysis period: Last {days} days")
-        if profile:
-            console.print(f"👤 AWS Profile: {profile}")
+        # When emitting JSON, stdout must contain ONLY the JSON document, so
+        # suppress all human-readable status output (and the progress spinner).
+        json_output = output_format.lower() == "json"
+
+        if not json_output:
+            console.print("🔍 Analyzing AWS costs for optimization opportunities...")
+            console.print(f"📅 Analysis period: Last {days} days")
+            if profile:
+                console.print(f"👤 AWS Profile: {profile}")
 
         # Initialize optimizer
         optimizer = CostOptimizer(profile=profile)
@@ -1366,8 +1371,11 @@ def optimize(
         analysis_period = TimePeriod(start=start_date, end=end_date)
 
         # Generate optimization report
-        with console.status("[bold green]Generating optimization report..."):
+        if json_output:
             report = optimizer.generate_optimization_report(analysis_period)
+        else:
+            with console.status("[bold green]Generating optimization report..."):
+                report = optimizer.generate_optimization_report(analysis_period)
 
         if output_format.lower() == "json":
             # JSON output for programmatic use

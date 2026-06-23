@@ -6,6 +6,11 @@ from datetime import datetime, timedelta
 from botocore.exceptions import ClientError, NoCredentialsError, ProfileNotFound
 
 from src.aws_cost_cli.aws_client import CredentialManager, AWSCostClient
+from src.aws_cost_cli.exceptions import (
+    AWSCredentialsError,
+    AWSPermissionsError,
+    AWSAPIError,
+)
 from src.aws_cost_cli.models import (
     QueryParameters,
     TimePeriod,
@@ -105,7 +110,7 @@ class TestCredentialManager:
         mock_session_class.return_value = mock_session
 
         manager = CredentialManager()
-        with pytest.raises(RuntimeError, match="Failed to get caller identity"):
+        with pytest.raises(AWSCredentialsError, match="credentials not found or invalid"):
             manager.get_caller_identity()
 
 
@@ -131,7 +136,13 @@ class TestAWSCostClient:
 
         assert client.profile == "production"
         assert client.region == "us-west-2"
-        mock_session.client.assert_called_with("ce", region_name="us-west-2")
+        # The Cost Explorer client is created with an optimized botocore Config
+        # (retries/timeouts/pooling), so assert the service + region rather than
+        # the exact kwargs.
+        mock_session.client.assert_called_once()
+        call_args, call_kwargs = mock_session.client.call_args
+        assert call_args == ("ce",)
+        assert call_kwargs["region_name"] == "us-west-2"
 
     @patch("boto3.Session")
     def test_validate_permissions_success(self, mock_session_class):
@@ -213,7 +224,7 @@ class TestAWSCostClient:
         client = AWSCostClient()
         params = QueryParameters()
 
-        with pytest.raises(PermissionError, match="Access denied to Cost Explorer API"):
+        with pytest.raises(AWSPermissionsError, match="Access denied"):
             client.get_cost_and_usage(params)
 
     @patch("boto3.Session")
@@ -233,7 +244,7 @@ class TestAWSCostClient:
         client = AWSCostClient()
         params = QueryParameters()
 
-        with pytest.raises(RuntimeError, match="AWS API rate limit exceeded"):
+        with pytest.raises(AWSAPIError, match="AWS API rate limit exceeded"):
             client.get_cost_and_usage(params)
 
     @patch("boto3.Session")
@@ -369,9 +380,7 @@ class TestAWSCostClient:
         params = QueryParameters()
 
         with patch("time.sleep"):  # Mock sleep to speed up test
-            with pytest.raises(
-                RuntimeError, match="AWS API rate limit exceeded after multiple retries"
-            ):
+            with pytest.raises(AWSAPIError, match="AWS API rate limit exceeded"):
                 client.get_cost_and_usage(params)
 
         assert mock_client.get_cost_and_usage.call_count == 3  # max_retries

@@ -296,54 +296,72 @@ class QueryPipeline:
     def _parse_query(
         self, context: QueryContext, result: QueryResult
     ) -> QueryParameters:
-        """Parse natural language query using enhanced fallback strategy."""
+        """Parse the natural language query.
+
+        Tries the configured LLM provider(s) first. If the parser surfaces an
+        ``LLMProviderError`` (e.g. no provider is reachable), fall back to
+        deterministic pattern matching and record that on the result so callers
+        can tell how the query was parsed (``fallback_used`` / ``parsing_method``).
+        """
         self.logger.debug(f"Parsing query: {context.original_query}")
 
-        # Use enhanced fallback strategy
+        # Validate any provider override before attempting to parse.
+        if context.llm_provider_override:
+            from .provider_factory import ProviderFactory
+
+            if not ProviderFactory.is_provider_supported(
+                context.llm_provider_override
+            ):
+                valid_providers = ProviderFactory.get_all_provider_names()
+                raise ValidationError(
+                    f"Invalid LLM provider '{context.llm_provider_override}'. "
+                    f"Valid providers are: {', '.join(valid_providers)}"
+                )
+
+            if not self._is_provider_configured(
+                context.llm_provider_override, self.config.llm_config
+            ):
+                raise ValidationError(
+                    self._get_provider_configuration_error(
+                        context.llm_provider_override
+                    )
+                )
+
         try:
-            if context.llm_provider_override:
-                from .provider_factory import ProviderFactory
-
-                if not ProviderFactory.is_provider_supported(
-                    context.llm_provider_override
-                ):
-                    valid_providers = ProviderFactory.get_all_provider_names()
-                    raise ValidationError(
-                        f"Invalid LLM provider '{context.llm_provider_override}'. "
-                        f"Valid providers are: {', '.join(valid_providers)}"
-                    )
-
-                if not self._is_provider_configured(
-                    context.llm_provider_override, self.config.llm_config
-                ):
-                    raise ValidationError(
-                        self._get_provider_configuration_error(
-                            context.llm_provider_override
-                        )
-                    )
-
-            # Create query parser with full config for fallback strategy
-            from .query_processor import QueryParser
-            from dataclasses import asdict
-
-            # Pass full config to enable fallback strategy
-            config_dict = asdict(self.config)
-            query_parser = QueryParser(self.config.llm_config, config_dict)
-
-            # Use the enhanced fallback method with provider override
-            query_params = query_parser.parse_query_with_fallback(
-                context.original_query, preferred_provider=context.llm_provider_override
-            )
+            query_params = self.query_parser.parse_query(context.original_query)
 
             result.llm_used = True
-            result.metadata["parsing_method"] = "enhanced_fallback"
+            result.metadata["parsing_method"] = "llm"
             if context.llm_provider_override:
                 result.metadata["provider_override"] = context.llm_provider_override
 
             return query_params
 
-        except (QueryParsingError, ValidationError) as e:
-            raise e
+        except LLMProviderError as llm_error:
+            # LLM is unavailable -- fall back to pattern matching so the query
+            # still succeeds, and surface that fact on the result.
+            self.logger.warning(
+                f"LLM parsing failed, using pattern matching fallback: {llm_error}"
+            )
+
+            fallback_result = self.query_parser.fallback_parser.parse_query(
+                context.original_query
+            )
+            query_params = self.query_parser._convert_to_query_parameters(
+                fallback_result
+            )
+
+            result.llm_used = False
+            result.fallback_used = True
+            result.metadata["parsing_method"] = "fallback"
+            result.metadata["llm_error"] = str(llm_error)
+            if context.llm_provider_override:
+                result.metadata["provider_override"] = context.llm_provider_override
+
+            return query_params
+
+        except (QueryParsingError, ValidationError):
+            raise
 
         except Exception as e:
             raise QueryParsingError(
