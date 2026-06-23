@@ -11,6 +11,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 from .models import QueryParameters, TimePeriod, TimePeriodGranularity, MetricType
+from .date_utils import DateRangeCalculator, Quarter
 from .exceptions import (
     LLMProviderError,
     QueryParsingError,
@@ -1426,7 +1427,11 @@ class FallbackParser:
             r"\bsimpledb\b": "Amazon SimpleDB",
         }
 
-        self.time_patterns = {
+        self._calc = DateRangeCalculator()
+
+        # Relative phrases resolved against the real current date (see
+        # _extract_time_period for the full resolution order).
+        self.relative_time_patterns = {
             r"\blast\s+month\b": self._last_month,
             r"\bthis\s+month\b": self._this_month,
             r"\blast\s+year\b": self._last_year,
@@ -1435,26 +1440,15 @@ class FallbackParser:
             r"\btoday\b": self._today,
             r"\blast\s+week\b": self._last_week,
             r"\bthis\s+week\b": self._this_week,
-            r"\bjuly\s+2025\b": self._july_2025,
-            r"\bin\s+july\s+2025\b": self._july_2025,
-            r"\bjuly\b": self._july_current_or_last,
-            # Full year patterns
-            r"\b2025\b": self._full_year_2025,
-            r"\bfor\s+2025\b": self._full_year_2025,
-            r"\ball\s+of\s+2025\b": self._full_year_2025,
-            r"\b2024\b": self._full_year_2024,
-            r"\bfor\s+2024\b": self._full_year_2024,
-            r"\ball\s+of\s+2024\b": self._full_year_2024,
-            # Quarter patterns
-            r"\bq1\s+2025\b": self._q1_2025,
-            r"\bq2\s+2025\b": self._q2_2025,
-            r"\bq3\s+2025\b": self._q3_2025,
-            r"\bq4\s+2025\b": self._q4_2025,
             r"\bthis\s+quarter\b": self._this_quarter,
             r"\blast\s+quarter\b": self._last_quarter,
-            # Fiscal year patterns
-            r"\bfy\s*2025\b": self._fy_2025,
-            r"\bfiscal\s+year\s+2025\b": self._fy_2025,
+        }
+
+        # Month-name lookup for "<month> [year]" queries.
+        self._month_numbers = {
+            "january": 1, "february": 2, "march": 3, "april": 4,
+            "may": 5, "june": 6, "july": 7, "august": 8,
+            "september": 9, "october": 10, "november": 11, "december": 12,
         }
 
         self.granularity_patterns = {
@@ -1565,154 +1559,137 @@ class FallbackParser:
     def _extract_time_period(
         self, query: str
     ) -> tuple[Optional[datetime], Optional[datetime]]:
-        """Extract time period from query."""
-        for pattern, time_func in self.time_patterns.items():
-            if re.search(pattern, query, re.IGNORECASE):
-                return time_func()
+        """Extract a (start, end) range from the query.
 
-        # Try to extract specific dates
-        date_match = re.search(r"(\d{4}-\d{2}-\d{2})", query)
-        if date_match:
+        Resolution order is most-specific-first so a bare year never swallows a
+        more specific phrase (e.g. "2024-01-15" or "March 2026"):
+        ISO date -> relative phrase -> quarter -> fiscal year -> month[+year]
+        -> calendar year. End dates are exclusive (the Cost Explorer convention).
+        """
+        # 1. Explicit ISO date: "costs on 2024-01-15"
+        iso = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", query)
+        if iso:
             try:
-                date = datetime.strptime(date_match.group(1), "%Y-%m-%d")
-                return date, date + timedelta(days=1)
+                day = datetime.strptime(iso.group(1), "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+                return day, day + timedelta(days=1)
             except ValueError:
                 pass
 
+        # 2. Relative phrases, anchored to the real current date.
+        for pattern, resolver in self.relative_time_patterns.items():
+            if re.search(pattern, query, re.IGNORECASE):
+                return resolver()
+
+        # 3. Quarter with explicit year: "Q1 2025", "q3 2026"
+        quarter = re.search(r"\bq([1-4])\s*(\d{4})\b", query, re.IGNORECASE)
+        if quarter:
+            tp = self._calc.get_quarter_range(
+                int(quarter.group(2)), Quarter(int(quarter.group(1)))
+            )
+            return tp.start, tp.end
+
+        # 4. Fiscal year: "FY2025", "fiscal year 2025"
+        fiscal = re.search(
+            r"\bfy\s*(\d{4})\b|\bfiscal\s+year\s+(\d{4})\b", query, re.IGNORECASE
+        )
+        if fiscal:
+            year = int(fiscal.group(1) or fiscal.group(2))
+            tp = self._calc.get_fiscal_year_range(year)
+            return tp.start, tp.end
+
+        # 5. Month name, optionally with a year: "July 2025", "in March"
+        month_range = self._match_month_year(query)
+        if month_range:
+            return month_range
+
+        # 6. Bare calendar year: "2024", "for 2026"
+        year_match = re.search(r"\b(20\d{2})\b", query)
+        if year_match:
+            tp = self._calc.get_calendar_year_range(int(year_match.group(1)))
+            return tp.start, tp.end
+
         return None, None
 
+    def _now(self) -> datetime:
+        """Current reference time (UTC). Centralized so dates stay testable."""
+        return datetime.now(timezone.utc)
+
+    def _start_of_day(self, moment: datetime) -> datetime:
+        return moment.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def _match_month_year(
+        self, query: str
+    ) -> Optional[tuple[datetime, datetime]]:
+        """Resolve "<month> [year]" to a full-month range (exclusive end)."""
+        lowered = query.lower()
+        for name, month in self._month_numbers.items():
+            if re.search(rf"\b{name}\b", lowered):
+                year_match = re.search(r"\b(20\d{2})\b", query)
+                year = int(year_match.group(1)) if year_match else self._now().year
+                start = datetime(year, month, 1, tzinfo=timezone.utc)
+                if month == 12:
+                    end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+                else:
+                    end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+                return start, end
+        return None
+
     def _last_month(self) -> tuple[datetime, datetime]:
-        """Get last month's date range."""
-        today = datetime(
-            2025, 8, 24, tzinfo=timezone.utc
-        )  # Current date: August 24, 2025
-        first_day_this_month = today.replace(
-            day=1, hour=0, minute=0, second=0, microsecond=0
-        )
-        last_day_last_month = first_day_this_month - timedelta(days=1)
-        first_day_last_month = last_day_last_month.replace(day=1)
-        return first_day_last_month, first_day_this_month
+        """Last calendar month; exclusive end is the first of this month."""
+        first_this_month = self._start_of_day(self._now()).replace(day=1)
+        first_last_month = (first_this_month - timedelta(days=1)).replace(day=1)
+        return first_last_month, first_this_month
 
     def _this_month(self) -> tuple[datetime, datetime]:
-        """Get this month's date range."""
-        today = datetime(
-            2025, 8, 24, tzinfo=timezone.utc
-        )  # Current date: August 24, 2025
-        first_day = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        return first_day, today
+        """This month so far: first of the month through end of today (exclusive)."""
+        now = self._now()
+        first_day = self._start_of_day(now).replace(day=1)
+        return first_day, self._start_of_day(now) + timedelta(days=1)
 
     def _last_year(self) -> tuple[datetime, datetime]:
-        """Get last year's date range."""
-        current_year = 2025
-        last_year = current_year - 1
-        start = datetime(last_year, 1, 1, tzinfo=timezone.utc)
-        end = datetime(current_year, 1, 1, tzinfo=timezone.utc)
-        return start, end
+        tp = self._calc.get_calendar_year_range(self._now().year - 1)
+        return tp.start, tp.end
 
     def _this_year(self) -> tuple[datetime, datetime]:
-        """Get this year's date range."""
-        today = datetime(
-            2025, 8, 24, tzinfo=timezone.utc
-        )  # Current date: August 24, 2025
-        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        return start, today
+        """This year so far: Jan 1 through end of today (exclusive)."""
+        now = self._now()
+        start = datetime(now.year, 1, 1, tzinfo=timezone.utc)
+        return start, self._start_of_day(now) + timedelta(days=1)
 
     def _yesterday(self) -> tuple[datetime, datetime]:
-        """Get yesterday's date range."""
-        today = datetime(2025, 8, 24, tzinfo=timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        yesterday = today - timedelta(days=1)
-        return yesterday, today
+        start_today = self._start_of_day(self._now())
+        return start_today - timedelta(days=1), start_today
 
     def _today(self) -> tuple[datetime, datetime]:
-        """Get today's date range."""
-        today = datetime(
-            2025, 8, 24, tzinfo=timezone.utc
-        )  # Current date: August 24, 2025
-        start_of_day = today.replace(hour=0, minute=0, second=0, microsecond=0)
-        return start_of_day, today
+        start_today = self._start_of_day(self._now())
+        return start_today, start_today + timedelta(days=1)
 
     def _last_week(self) -> tuple[datetime, datetime]:
-        """Get last week's date range."""
-        today = datetime(
-            2025, 8, 24, tzinfo=timezone.utc
-        )  # Current date: August 24, 2025
-        days_since_monday = today.weekday()
-        this_monday = today - timedelta(days=days_since_monday)
-        last_monday = this_monday - timedelta(days=7)
-        return last_monday, this_monday
+        start_today = self._start_of_day(self._now())
+        this_monday = start_today - timedelta(days=start_today.weekday())
+        return this_monday - timedelta(days=7), this_monday
 
     def _this_week(self) -> tuple[datetime, datetime]:
-        """Get this week's date range."""
-        today = datetime(
-            2025, 8, 24, tzinfo=timezone.utc
-        )  # Current date: August 24, 2025
-        days_since_monday = today.weekday()
-        this_monday = today - timedelta(days=days_since_monday)
-        return this_monday, today
-
-    def _july_2025(self) -> tuple[datetime, datetime]:
-        """Get July 2025 date range."""
-        start = datetime(2025, 7, 1, tzinfo=timezone.utc)
-        end = datetime(
-            2025, 8, 1, tzinfo=timezone.utc
-        )  # End of month is start of next month
-        return start, end
-
-    def _july_current_or_last(self) -> tuple[datetime, datetime]:
-        """Get July date range (2025 since we're in 2025)."""
-        return self._july_2025()
-
-    def _q1_2025(self) -> tuple[datetime, datetime]:
-        """Get Q1 2025 date range."""
-        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2025, 4, 1, tzinfo=timezone.utc)
-        return start, end
-
-    def _q2_2025(self) -> tuple[datetime, datetime]:
-        """Get Q2 2025 date range."""
-        start = datetime(2025, 4, 1, tzinfo=timezone.utc)
-        end = datetime(2025, 7, 1, tzinfo=timezone.utc)
-        return start, end
-
-    def _q3_2025(self) -> tuple[datetime, datetime]:
-        """Get Q3 2025 date range."""
-        start = datetime(2025, 7, 1, tzinfo=timezone.utc)
-        end = datetime(2025, 10, 1, tzinfo=timezone.utc)
-        return start, end
-
-    def _q4_2025(self) -> tuple[datetime, datetime]:
-        """Get Q4 2025 date range."""
-        start = datetime(2025, 10, 1, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        return start, end
+        start_today = self._start_of_day(self._now())
+        this_monday = start_today - timedelta(days=start_today.weekday())
+        return this_monday, start_today + timedelta(days=1)
 
     def _this_quarter(self) -> tuple[datetime, datetime]:
-        """Get current quarter (Q3 2025)."""
-        return self._q3_2025()
+        """Current quarter from its start through end of today (exclusive)."""
+        year, quarter = self._calc.get_current_quarter()
+        tp = self._calc.get_quarter_range(year, quarter)
+        return tp.start, self._start_of_day(self._now()) + timedelta(days=1)
 
     def _last_quarter(self) -> tuple[datetime, datetime]:
-        """Get last quarter (Q2 2025)."""
-        return self._q2_2025()
-
-    def _fy_2025(self) -> tuple[datetime, datetime]:
-        """Get fiscal year 2025 (assuming January start)."""
-        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        return start, end
-
-    def _full_year_2025(self) -> tuple[datetime, datetime]:
-        """Get full calendar year 2025."""
-        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        return start, end
-
-    def _full_year_2024(self) -> tuple[datetime, datetime]:
-        """Get full calendar year 2024."""
-        start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        return start, end
+        year, quarter = self._calc.get_current_quarter()
+        if quarter == Quarter.Q1:
+            prev_year, prev_quarter = year - 1, Quarter.Q4
+        else:
+            prev_year, prev_quarter = year, Quarter(quarter.value - 1)
+        tp = self._calc.get_quarter_range(prev_year, prev_quarter)
+        return tp.start, tp.end
 
     def _extract_date_range_type(self, query: str) -> Optional[str]:
         """Extract date range type from query."""
