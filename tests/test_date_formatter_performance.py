@@ -48,9 +48,9 @@ class TestDateFormatterPerformanceLarge:
         assert len(results) == 10000
         assert all(isinstance(result, str) and len(result) > 0 for result in results)
         
-        # Spot check some results
+        # Spot check some results (day 0 and day 9999 from 2020-01-01)
         assert results[0] == "January 1, 2020"
-        assert "December" in results[-1] and "2047" in results[-1]  # Should be around end of 2047
+        assert results[-1] == "May 18, 2047"
     
     def test_performance_1k_mixed_periods(self):
         """Test performance with 1,000 mixed period types."""
