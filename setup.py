@@ -37,7 +37,6 @@ setup(
         "anthropic>=0.7.0",
         "google-generativeai>=0.3.0",
         "requests>=2.28.0",
-        "openpyxl>=3.0.0",
     ],
     extras_require={
         "dev": [

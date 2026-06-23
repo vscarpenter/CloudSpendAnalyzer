@@ -13,8 +13,6 @@ import pytest
 from src.aws_cost_cli.data_exporter import (
     CSVExporter,
     JSONExporter,
-    ExcelExporter,
-    EmailReporter,
     ExportManager,
 )
 from src.aws_cost_cli.models import (
@@ -296,166 +294,6 @@ class TestJSONExporter:
                 os.unlink(output_path)
 
 
-class TestExcelExporter:
-    """Test Excel export functionality."""
-
-    def test_excel_exporter_initialization(self):
-        """Test Excel exporter initialization."""
-        try:
-            exporter = ExcelExporter()
-            assert hasattr(exporter, "openpyxl")
-            assert hasattr(exporter, "date_formatter")
-        except ImportError:
-            # openpyxl not available, skip test
-            pytest.skip("openpyxl not available")
-
-    def test_excel_export_dependency_error(self, sample_cost_data, sample_query_params):
-        """Test Excel export fails gracefully when openpyxl is not available."""
-        with patch(
-            "src.aws_cost_cli.data_exporter.ExcelExporter._check_dependencies"
-        ) as mock_check:
-            mock_check.side_effect = ImportError(
-                "openpyxl is required for Excel export"
-            )
-
-            with pytest.raises(ImportError) as exc_info:
-                ExcelExporter()
-
-            assert "openpyxl is required for Excel export" in str(exc_info.value)
-
-    def test_excel_export_with_formatted_dates(
-        self, sample_cost_data, sample_query_params
-    ):
-        """Test Excel export includes formatted dates."""
-        try:
-            exporter = ExcelExporter()
-        except ImportError:
-            pytest.skip("openpyxl not available")
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".xlsx", delete=False) as f:
-            output_path = f.name
-
-        try:
-            result_path = exporter.export(
-                sample_cost_data, sample_query_params, output_path
-            )
-            assert result_path == output_path
-            assert os.path.exists(output_path)
-
-            # Read and verify Excel content
-            wb = exporter.openpyxl.load_workbook(output_path)
-
-            # Check summary sheet has formatted period
-            summary_ws = wb["Summary"]
-            period_cell = summary_ws["B6"]
-            assert period_cell.value
-            # Should be formatted, not just raw dates
-            assert period_cell.value != "Invalid date range"
-
-            # Check detailed data sheet has formatted period column
-            details_ws = wb["Detailed Data"]
-
-            # Find the header row
-            headers = []
-            for row in details_ws.iter_rows(min_row=1, max_row=1, values_only=True):
-                headers = list(row)
-                break
-
-            assert "Period Start" in headers
-            assert "Period End" in headers
-            assert "Formatted Period" in headers
-
-            # Find the formatted period column index
-            formatted_period_idx = headers.index("Formatted Period")
-
-            # Check that data rows have formatted periods
-            data_rows = list(
-                details_ws.iter_rows(min_row=2, max_row=10, values_only=True)
-            )
-            data_rows = [
-                row
-                for row in data_rows
-                if row and len(row) > formatted_period_idx and row[0]
-            ]
-
-            for row in data_rows[:3]:  # Check first few rows
-                formatted_period = row[formatted_period_idx]
-                # Should not be empty and should be human-readable
-                assert formatted_period
-                assert formatted_period != "Invalid date range"
-
-        finally:
-            if os.path.exists(output_path):
-                os.unlink(output_path)
-
-
-class TestEmailReporter:
-    """Test email reporting functionality."""
-
-    def test_email_reporter_initialization(self):
-        """Test email reporter initialization."""
-        smtp_config = {
-            "host": "smtp.example.com",
-            "port": 587,
-            "username": "user@example.com",
-            "password": "password",
-            "use_tls": True,
-        }
-
-        reporter = EmailReporter(smtp_config)
-        assert reporter.smtp_config == smtp_config
-
-    @patch("smtplib.SMTP")
-    @patch("src.aws_cost_cli.data_exporter.EmailReporter._create_attachments")
-    def test_send_report_basic(
-        self, mock_create_attachments, mock_smtp, sample_cost_data, sample_query_params
-    ):
-        """Test basic email report sending."""
-        # Mock SMTP
-        mock_server = MagicMock()
-        mock_smtp.return_value.__enter__.return_value = mock_server
-
-        # Mock attachments
-        mock_create_attachments.return_value = []
-
-        smtp_config = {
-            "host": "smtp.example.com",
-            "port": 587,
-            "username": "user@example.com",
-            "password": "password",
-            "use_tls": True,
-        }
-
-        reporter = EmailReporter(smtp_config)
-        recipients = ["test@example.com"]
-
-        result = reporter.send_report(
-            sample_cost_data, sample_query_params, recipients, include_attachments=False
-        )
-
-        assert result is True
-        mock_smtp.assert_called_with("smtp.example.com", 587)
-        mock_server.starttls.assert_called_once()
-        mock_server.login.assert_called_with("user@example.com", "password")
-        mock_server.send_message.assert_called_once()
-
-    def test_create_email_body(self, sample_cost_data, sample_query_params):
-        """Test email body creation."""
-        smtp_config = {
-            "host": "smtp.example.com",
-            "port": 587,
-            "username": "user@example.com",
-            "password": "password",
-        }
-
-        reporter = EmailReporter(smtp_config)
-        body = reporter._create_email_body(sample_cost_data, sample_query_params)
-
-        assert "<html>" in body
-        assert "AWS Cost Report for EC2" in body
-        assert "$525.00" in body
-
-
 class TestExportManager:
     """Test export manager functionality."""
 
@@ -562,32 +400,6 @@ class TestExportManager:
 
         assert "Unsupported export format 'pdf'" in str(exc_info.value)
 
-    @patch("src.aws_cost_cli.data_exporter.EmailReporter.send_report")
-    def test_send_email_report(
-        self, mock_send_report, sample_cost_data, sample_query_params
-    ):
-        """Test email report sending via manager."""
-        mock_send_report.return_value = True
-
-        manager = ExportManager()
-        smtp_config = {
-            "host": "smtp.example.com",
-            "port": 587,
-            "username": "user@example.com",
-            "password": "password",
-        }
-
-        result = manager.send_email_report(
-            sample_cost_data,
-            sample_query_params,
-            smtp_config,
-            ["test@example.com"],
-            attachment_formats=["csv"],
-        )
-
-        assert result is True
-        mock_send_report.assert_called_once()
-
 
 class TestFormattedDateExport:
     """Test formatted date functionality in exports."""
@@ -676,53 +488,6 @@ class TestFormattedDateExport:
             # Check result formatted period
             result_formatted = data["results"][0]["time_period"]["formatted"]
             assert "January 15, 2024" in result_formatted
-
-        finally:
-            if os.path.exists(output_path):
-                os.unlink(output_path)
-
-    def test_excel_formatted_dates_quarter(self):
-        """Test Excel export with quarter period formatting."""
-        try:
-            exporter = ExcelExporter()
-        except ImportError:
-            pytest.skip("openpyxl not available")
-
-        # Create quarter cost data (Q1 2024: Jan 1 - Apr 1)
-        start_date = datetime(2024, 1, 1)
-        end_date = datetime(2024, 4, 1)  # Exclusive end date for Q1
-
-        result = CostResult(
-            time_period=TimePeriod(start_date, end_date),
-            total=CostAmount(Decimal("300"), "USD"),
-            groups=[],
-            estimated=False,
-        )
-
-        cost_data = CostData(
-            results=[result],
-            time_period=TimePeriod(start_date, end_date),
-            total_cost=CostAmount(Decimal("300"), "USD"),
-            currency="USD",
-            group_definitions=[],
-        )
-
-        query_params = QueryParameters(service="EC2")
-        query_params.original_query = "EC2 costs for Q1 2024"
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".xlsx", delete=False) as f:
-            output_path = f.name
-
-        try:
-            exporter.export(cost_data, query_params, output_path)
-
-            # Read and verify Excel content
-            wb = exporter.openpyxl.load_workbook(output_path)
-
-            # Check summary sheet has formatted quarter
-            summary_ws = wb["Summary"]
-            period_cell = summary_ws["B6"]
-            assert "Q1 2024" in str(period_cell.value)
 
         finally:
             if os.path.exists(output_path):

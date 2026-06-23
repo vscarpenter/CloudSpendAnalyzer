@@ -473,7 +473,7 @@ class TestInteractiveQueryBuilder:
     @patch("src.aws_cost_cli.interactive_query_builder.Prompt")
     def test_start_interactive_session_exit(self, mock_prompt, mock_console):
         """Test interactive session exit."""
-        mock_prompt.ask.return_value = "6"  # Exit option
+        mock_prompt.ask.return_value = "5"  # Exit option
 
         builder = InteractiveQueryBuilder()
         result = builder.start_interactive_session()
@@ -483,29 +483,18 @@ class TestInteractiveQueryBuilder:
     @patch("src.aws_cost_cli.interactive_query_builder.Console")
     @patch("src.aws_cost_cli.interactive_query_builder.Prompt")
     @patch("src.aws_cost_cli.interactive_query_builder.Confirm")
-    def test_build_query_from_scratch(self, mock_confirm, mock_prompt, mock_console):
-        """Test building query from scratch."""
-        # Mock user inputs
-        mock_prompt.ask.side_effect = [
-            "1",  # Build from scratch
-            "total spending",  # Intent
-            "EC2",  # Service
-            "last month",  # Time period
-            "What did I spend on EC2 for last month?",  # Final query edit
-        ]
-        mock_confirm.ask.side_effect = [
-            False,  # No breakdown
-            False,  # No comparison
-            False,  # Don't use generated query
-            True,  # Use edited query
-        ]
+    def test_start_interactive_session_template(
+        self, mock_confirm, mock_prompt, mock_console
+    ):
+        """Test interactive session returns a query selected via template."""
+        mock_prompt.ask.return_value = "1"  # Use a query template
 
         builder = InteractiveQueryBuilder()
 
-        # Mock the _build_query_from_scratch method to return a query
+        # Mock the _use_template method to return a query
         with patch.object(
             builder,
-            "_build_query_from_scratch",
+            "_use_template",
             return_value="What did I spend on EC2 last month?",
         ):
             result = builder.start_interactive_session()

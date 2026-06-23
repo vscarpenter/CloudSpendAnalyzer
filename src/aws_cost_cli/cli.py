@@ -1148,7 +1148,7 @@ def cleanup_cache():
 @click.option(
     "--format",
     "export_format",
-    type=click.Choice(["csv", "json", "excel"], case_sensitive=False),
+    type=click.Choice(["csv", "json"], case_sensitive=False),
     default="csv",
     help="Export format (default: csv)",
 )
@@ -1182,7 +1182,7 @@ def export(
 
     Examples:
         aws-cost-cli export "EC2 costs last month" --format csv
-        aws-cost-cli export "S3 spending this year" --format excel --output s3_costs.xlsx
+        aws-cost-cli export "S3 spending this year" --format json --output s3_costs.json
         aws-cost-cli export "Total costs Q1" --format json --profile production
     """
     try:
@@ -1244,12 +1244,6 @@ def export(
                     border_style="red",
                 )
             )
-
-            if export_format.lower() == "excel":
-                console.print(
-                    "💡 To enable Excel export, install openpyxl: pip install openpyxl"
-                )
-
             sys.exit(1)
 
         # Perform export
@@ -1691,184 +1685,6 @@ def detect_anomalies(
 
 
 @cli.command()
-@click.argument("query", required=True)
-@click.option(
-    "--recipients", "-r", required=True, help="Comma-separated list of email recipients"
-)
-@click.option("--subject", "-s", help="Email subject (auto-generated if not specified)")
-@click.option(
-    "--attachments",
-    type=click.Choice(["csv", "json", "excel"], case_sensitive=False),
-    multiple=True,
-    default=["csv"],
-    help="Attachment formats to include (can specify multiple)",
-)
-@click.option("--smtp-host", required=True, help="SMTP server host")
-@click.option(
-    "--smtp-port", type=int, default=587, help="SMTP server port (default: 587)"
-)
-@click.option("--smtp-username", required=True, help="SMTP username")
-@click.option("--smtp-password", required=True, help="SMTP password")
-@click.option("--no-tls", is_flag=True, help="Disable TLS encryption")
-@click.option("--profile", "-p", help="AWS profile to use")
-@click.option(
-    "--fresh", "-f", is_flag=True, help="Force fresh data retrieval, bypassing cache"
-)
-@click.option(
-    "--config-file",
-    "-c",
-    type=click.Path(exists=True),
-    help="Path to configuration file",
-)
-@click.pass_context
-def email_report(
-    ctx,
-    query: str,
-    recipients: str,
-    subject: Optional[str],
-    attachments: tuple,
-    smtp_host: str,
-    smtp_port: int,
-    smtp_username: str,
-    smtp_password: str,
-    no_tls: bool,
-    profile: Optional[str],
-    fresh: bool,
-    config_file: Optional[str],
-):
-    """Send cost report via email.
-
-    Examples:
-        aws-cost-cli email-report "EC2 costs last month" \\
-            --recipients "admin@company.com,finance@company.com" \\
-            --smtp-host smtp.gmail.com --smtp-username user@gmail.com --smtp-password password
-
-        aws-cost-cli email-report "Monthly AWS costs" \\
-            --recipients "team@company.com" --subject "Monthly Cost Report" \\
-            --attachments csv --attachments excel \\
-            --smtp-host mail.company.com --smtp-username reports --smtp-password secret
-    """
-    try:
-        # Parse recipients
-        recipient_list = [email.strip() for email in recipients.split(",")]
-
-        # Create query context
-        context = QueryContext(
-            original_query=query,
-            profile=profile,
-            fresh_data=fresh,
-            output_format="json",  # Use JSON internally
-            debug=ctx.obj.get("debug", False),
-        )
-
-        # Initialize pipeline
-        pipeline = QueryPipeline(config_path=config_file)
-
-        # Process query
-        console.print(f"🔍 Processing query: '{query}'")
-        result = pipeline.process_query(context)
-
-        if not result.success:
-            console.print(
-                Panel(
-                    Text(result.error.message, style="bold red"),
-                    title="Query Error",
-                    border_style="red",
-                )
-            )
-            sys.exit(1)
-
-        # Prepare SMTP configuration
-        smtp_config = {
-            "host": smtp_host,
-            "port": smtp_port,
-            "username": smtp_username,
-            "password": smtp_password,
-            "use_tls": not no_tls,
-        }
-
-        # Send email report
-        console.print(
-            f"📧 Sending email report to {len(recipient_list)} recipient(s)..."
-        )
-
-        export_manager = ExportManager(
-            date_formatting_config=pipeline.config.date_formatting
-        )
-
-        # Filter available attachment formats
-        available_formats = export_manager.get_available_formats()
-        attachment_formats = [
-            fmt for fmt in attachments if fmt.lower() in available_formats
-        ]
-
-        if len(attachment_formats) != len(attachments):
-            missing = [
-                fmt for fmt in attachments if fmt.lower() not in available_formats
-            ]
-            console.print(f"⚠️  Skipping unavailable formats: {', '.join(missing)}")
-            if "excel" in missing:
-                console.print(
-                    "💡 To enable Excel attachments, install openpyxl: pip install openpyxl"
-                )
-
-        success = export_manager.send_email_report(
-            result.cost_data,
-            result.query_params,
-            smtp_config,
-            recipient_list,
-            subject,
-            attachment_formats,
-        )
-
-        if success:
-            console.print(
-                Panel(
-                    Text("✅ Email report sent successfully", style="bold green"),
-                    title="Email Sent",
-                    border_style="green",
-                )
-            )
-
-            console.print(f"📧 Recipients: {', '.join(recipient_list)}")
-            console.print(f"📊 Total Cost: ${result.cost_data.total_cost.amount:,.2f}")
-            console.print(
-                f"📅 Period: {result.cost_data.time_period.start.date()} to {result.cost_data.time_period.end.date()}"
-            )
-
-            if attachment_formats:
-                console.print(
-                    f"📎 Attachments: {', '.join(attachment_formats).upper()}"
-                )
-        else:
-            console.print(
-                Panel(
-                    Text("❌ Failed to send email report", style="bold red"),
-                    title="Email Error",
-                    border_style="red",
-                )
-            )
-            sys.exit(1)
-
-    except KeyboardInterrupt:
-        console.print("\n👋 Email sending cancelled by user")
-        sys.exit(0)
-    except Exception as e:
-        console.print(
-            Panel(
-                Text(f"❌ Email sending failed: {str(e)}", style="bold red"),
-                title="Email Error",
-                border_style="red",
-            )
-        )
-        if ctx.obj.get("debug"):
-            import traceback
-
-            console.print(traceback.format_exc())
-        sys.exit(1)
-
-
-@cli.command()
 @click.option("--debug", is_flag=True, help="Enable debug output")
 @click.pass_context
 def test(ctx, debug: bool):
@@ -2017,22 +1833,36 @@ def health(output_json: bool, config_file: Optional[str]):
     sys.exit(0 if result["status"] == "healthy" else 1)
 
 
-@cli.command()
+@cli.group()
+def providers():
+    """Manage and inspect LLM providers.
+
+    Subcommands:
+        list         List providers and their configuration status
+        test         Test a specific provider's configuration
+        health       Check health status of configured providers
+        performance  Show provider performance metrics
+        reset        Reset provider performance metrics
+    """
+    pass
+
+
+@providers.command("list")
 @click.option(
     "--config-file",
     "-c",
     type=click.Path(exists=True),
     help="Path to configuration file",
 )
-def list_providers(config_file: Optional[str]):
+def providers_list(config_file: Optional[str]):
     """List all available LLM providers and their configuration status.
 
     Shows which providers are configured and ready to use, and what's needed
     to configure providers that aren't set up yet.
 
     Examples:
-        aws-cost-cli list-providers
-        aws-cost-cli list-providers --config-file custom_config.yaml
+        aws-cost-cli providers list
+        aws-cost-cli providers list --config-file custom_config.yaml
     """
     try:
         # Load configuration
@@ -2137,7 +1967,9 @@ def list_providers(config_file: Optional[str]):
         console.print(
             "   • Use 'aws-cost-cli configure --provider <name>' to set up a provider"
         )
-        console.print("   • Use 'aws-cost-cli test-provider <name>' to test a provider")
+        console.print(
+            "   • Use 'aws-cost-cli providers test <name>' to test a provider"
+        )
         console.print("   • Ollama is recommended for local/offline usage")
 
     except Exception as e:
@@ -2151,7 +1983,7 @@ def list_providers(config_file: Optional[str]):
         sys.exit(1)
 
 
-@cli.command()
+@providers.command("test")
 @click.argument(
     "provider",
     type=click.Choice(
@@ -2164,16 +1996,16 @@ def list_providers(config_file: Optional[str]):
     type=click.Path(exists=True),
     help="Path to configuration file",
 )
-def test_provider(provider: str, config_file: Optional[str]):
+def providers_test(provider: str, config_file: Optional[str]):
     """Test a specific LLM provider configuration.
 
     Verifies that the provider is properly configured and can successfully
     process queries. This helps troubleshoot configuration issues.
 
     Examples:
-        aws-cost-cli test-provider openai
-        aws-cost-cli test-provider gemini --config-file custom_config.yaml
-        aws-cost-cli test-provider ollama
+        aws-cost-cli providers test openai
+        aws-cost-cli providers test gemini --config-file custom_config.yaml
+        aws-cost-cli providers test ollama
     """
     try:
         provider = provider.lower()
@@ -2322,7 +2154,7 @@ def test_provider(provider: str, config_file: Optional[str]):
         sys.exit(1)
 
 
-@cli.command()
+@providers.command("performance")
 @click.option(
     "--hours",
     "-h",
@@ -2338,16 +2170,16 @@ def test_provider(provider: str, config_file: Optional[str]):
     ),
     help="Show performance for specific provider only",
 )
-def provider_performance(hours: int, provider: Optional[str]):
+def providers_performance(hours: int, provider: Optional[str]):
     """Show LLM provider performance metrics and statistics.
 
     Displays performance metrics including response times, success rates,
     error rates, and health status for all configured LLM providers.
 
     Examples:
-        aws-cost-cli provider-performance
-        aws-cost-cli provider-performance --hours 48
-        aws-cost-cli provider-performance --provider openai
+        aws-cost-cli providers performance
+        aws-cost-cli providers performance --hours 48
+        aws-cost-cli providers performance --provider openai
     """
     try:
         from .query_processor import get_performance_monitor
@@ -2448,7 +2280,7 @@ def provider_performance(hours: int, provider: Optional[str]):
         sys.exit(1)
 
 
-@cli.command()
+@providers.command("health")
 @click.option(
     "--provider",
     "-p",
@@ -2470,7 +2302,7 @@ def provider_performance(hours: int, provider: Optional[str]):
     type=click.Path(exists=True),
     help="Path to configuration file",
 )
-def provider_health(
+def providers_health(
     provider: Optional[str], timeout: float, config_file: Optional[str]
 ):
     """Check health status of LLM providers.
@@ -2479,9 +2311,9 @@ def provider_health(
     responding correctly and measure response times.
 
     Examples:
-        aws-cost-cli provider-health
-        aws-cost-cli provider-health --provider openai
-        aws-cost-cli provider-health --timeout 5
+        aws-cost-cli providers health
+        aws-cost-cli providers health --provider openai
+        aws-cost-cli providers health --timeout 5
     """
     try:
         # Load configuration
@@ -2500,7 +2332,7 @@ def provider_health(
         if not available_providers:
             console.print("⚠️  No providers are configured and available.")
             console.print(
-                "💡 Run 'aws-cost-cli list-providers' to see configuration status."
+                "💡 Run 'aws-cost-cli providers list' to see configuration status."
             )
             return
 
@@ -2580,7 +2412,7 @@ def provider_health(
         sys.exit(1)
 
 
-@cli.command()
+@providers.command("reset")
 @click.option(
     "--provider",
     "-p",
@@ -2592,15 +2424,15 @@ def provider_health(
 @click.confirmation_option(
     prompt="Are you sure you want to reset provider performance metrics?"
 )
-def reset_provider_metrics(provider: Optional[str]):
+def providers_reset(provider: Optional[str]):
     """Reset LLM provider performance metrics.
 
     Clears all stored performance metrics and statistics for providers.
     This is useful for starting fresh after configuration changes.
 
     Examples:
-        aws-cost-cli reset-provider-metrics
-        aws-cost-cli reset-provider-metrics --provider openai
+        aws-cost-cli providers reset
+        aws-cost-cli providers reset --provider openai
     """
     try:
         from .query_processor import get_performance_monitor

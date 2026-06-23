@@ -40,7 +40,7 @@ class TestListProvidersCommand:
             }
             mock_factory.get_available_providers.return_value = ["openai", "bedrock", "gemini"]
             
-            result = runner.invoke(cli, ['list-providers'])
+            result = runner.invoke(cli, ['providers', 'list'])
             
             assert result.exit_code == 0
             assert "LLM Provider Status" in result.output
@@ -71,7 +71,7 @@ class TestListProvidersCommand:
             }
             mock_factory.get_available_providers.return_value = []
             
-            result = runner.invoke(cli, ['list-providers'])
+            result = runner.invoke(cli, ['providers', 'list'])
             
             assert result.exit_code == 0
             assert "No providers are currently available" in result.output
@@ -96,7 +96,7 @@ class TestListProvidersCommand:
                 }
                 mock_factory.get_available_providers.return_value = ["openai"]
                 
-                result = runner.invoke(cli, ['list-providers', '--config-file', 'test_config.yaml'])
+                result = runner.invoke(cli, ['providers', 'list', '--config-file', 'test_config.yaml'])
                 
                 assert result.exit_code == 0
                 mock_config_manager.return_value.load_config.assert_called_with('test_config.yaml')
@@ -108,7 +108,7 @@ class TestListProvidersCommand:
         with patch('src.aws_cost_cli.cli.ConfigManager') as mock_config_manager:
             mock_config_manager.return_value.load_config.side_effect = Exception("Test error")
             
-            result = runner.invoke(cli, ['list-providers'])
+            result = runner.invoke(cli, ['providers', 'list'])
             
             assert result.exit_code == 1
             assert "Failed to list providers" in result.output
@@ -139,7 +139,7 @@ class TestTestProviderCommand:
             }
             mock_factory.create_provider.return_value = mock_provider
             
-            result = runner.invoke(cli, ['test-provider', 'openai'])
+            result = runner.invoke(cli, ['providers', 'test', 'openai'])
             
             assert result.exit_code == 0
             assert "Testing Openai provider configuration" in result.output
@@ -161,7 +161,7 @@ class TestTestProviderCommand:
             # Mock provider creation failure
             mock_factory.create_provider.side_effect = ConfigurationError("API key required")
             
-            result = runner.invoke(cli, ['test-provider', 'openai'])
+            result = runner.invoke(cli, ['providers', 'test', 'openai'])
             
             assert result.exit_code == 1
             assert "Failed to create provider" in result.output
@@ -183,7 +183,7 @@ class TestTestProviderCommand:
             mock_provider.is_available.return_value = False
             mock_factory.create_provider.return_value = mock_provider
             
-            result = runner.invoke(cli, ['test-provider', 'ollama'])
+            result = runner.invoke(cli, ['providers', 'test', 'ollama'])
             
             assert result.exit_code == 1
             assert "Provider created but not available" in result.output
@@ -205,7 +205,7 @@ class TestTestProviderCommand:
             mock_provider.parse_query.side_effect = Exception("Connection refused")
             mock_factory.create_provider.return_value = mock_provider
             
-            result = runner.invoke(cli, ['test-provider', 'ollama'])
+            result = runner.invoke(cli, ['providers', 'test', 'ollama'])
             
             assert result.exit_code == 1
             assert "Query parsing failed" in result.output
@@ -232,7 +232,7 @@ class TestTestProviderCommand:
                 mock_provider.parse_query.return_value = {"service": "EC2"}
                 mock_factory.create_provider.return_value = mock_provider
                 
-                result = runner.invoke(cli, ['test-provider', 'gemini', '--config-file', 'test_config.yaml'])
+                result = runner.invoke(cli, ['providers', 'test', 'gemini', '--config-file', 'test_config.yaml'])
                 
                 assert result.exit_code == 0
                 mock_config_manager.return_value.load_config.assert_called_with('test_config.yaml')
@@ -258,7 +258,7 @@ class TestTestProviderCommand:
             mock_provider.parse_query.return_value = {"service": "EC2"}
             mock_factory.create_provider.return_value = mock_provider
             
-            result = runner.invoke(cli, ['test-provider', 'openai'])
+            result = runner.invoke(cli, ['providers', 'test', 'openai'])
             
             assert result.exit_code == 0
             assert "sk-12345..." in result.output  # API key should be masked
@@ -279,7 +279,7 @@ class TestTestProviderCommand:
                 # Mock provider creation failure to test error handling
                 mock_factory.create_provider.side_effect = ConfigurationError("Not configured")
                 
-                result = runner.invoke(cli, ['test-provider', provider])
+                result = runner.invoke(cli, ['providers', 'test', provider])
                 
                 assert result.exit_code == 1
                 assert f"Testing {provider.title()} provider configuration" in result.output
@@ -291,7 +291,7 @@ class TestTestProviderCommand:
         with patch('src.aws_cost_cli.cli.ConfigManager') as mock_config_manager:
             mock_config_manager.return_value.load_config.side_effect = Exception("Test error")
             
-            result = runner.invoke(cli, ['test-provider', 'openai'])
+            result = runner.invoke(cli, ['providers', 'test', 'openai'])
             
             assert result.exit_code == 1
             assert "Provider test failed" in result.output
