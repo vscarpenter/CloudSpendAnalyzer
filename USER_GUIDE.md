@@ -24,7 +24,7 @@ Before using the AWS Cost Explorer CLI, ensure you have:
 
 1. **AWS CLI configured** with appropriate permissions
 2. **Cost Explorer enabled** in your AWS account (may incur charges)
-3. **LLM provider configured** (OpenAI, Anthropic, Bedrock, or Ollama)
+3. **LLM provider configured** (Ollama, OpenAI, Anthropic, Bedrock, or Gemini)
 4. **Python 3.8+** installed
 
 ### First Query
@@ -72,6 +72,432 @@ uv pip install -e .
 - Database drivers (PostgreSQL, Redis)
 - Security and SSL/TLS support
 - Process management tools
+
+## LLM Provider Configuration
+
+The CLI supports five LLM providers with Ollama as the default for local, private processing.
+
+### Provider Overview
+
+| Provider | Type | API Key Required | Best For |
+|----------|------|------------------|----------|
+| **Ollama** | Local | ❌ No | Privacy, offline use, no costs |
+| **Gemini** | Cloud | ✅ Yes | Fast, cost-effective queries |
+| **OpenAI** | Cloud | ✅ Yes | Reliable, well-tested |
+| **Anthropic** | Cloud | ✅ Yes | Complex analysis, safety |
+| **Bedrock** | AWS | ❌ AWS Creds | AWS-native integration |
+
+### 1. Ollama (Default - Recommended)
+
+**Advantages:** No API keys, private, offline capable, no per-query costs
+**Setup:**
+
+```bash
+# Install Ollama
+brew install ollama  # macOS
+# or visit https://ollama.ai/download for other platforms
+
+# Start Ollama service
+ollama serve
+
+# Pull a model (choose one)
+ollama pull llama2        # 7B model, good balance
+ollama pull llama2:13b    # 13B model, better quality
+ollama pull codellama     # Specialized for code
+
+# Configure (default provider)
+aws-cost-cli configure --provider ollama --model llama2
+```
+
+### 2. Google Gemini
+
+**Advantages:** Fast responses, cost-effective, good quality, excellent for cost analysis
+**Setup:**
+
+```bash
+# Get API key from https://makersuite.google.com/app/apikey
+export GEMINI_API_KEY="your-api-key-here"
+
+# Configure Gemini with default model
+aws-cost-cli configure --provider gemini --model gemini-1.5-flash
+
+# Test configuration
+aws-cost-cli test-provider gemini
+
+# Verify API key is working
+aws-cost-cli query "test query" --llm-provider gemini
+```
+
+**Available Models:**
+- `gemini-1.5-flash` - Fast and cost-effective (default, recommended)
+- `gemini-1.5-pro` - More capable, higher cost, better for complex analysis
+
+**Configuration Options:**
+```bash
+# Basic configuration (uses default model)
+aws-cost-cli configure --provider gemini
+
+# With specific model
+aws-cost-cli configure --provider gemini --model gemini-1.5-pro
+
+# With custom temperature (0.0-1.0, lower = more consistent)
+aws-cost-cli configure --provider gemini --temperature 0.1
+
+# Test different models
+aws-cost-cli query "EC2 costs last month" --llm-provider gemini
+```
+
+**Gemini-Specific Features:**
+- **Fast Processing:** Typically 2-3x faster than other cloud providers
+- **Cost Effective:** Lower per-query costs compared to OpenAI/Anthropic
+- **Good Context:** Handles complex cost queries with multiple parameters
+- **JSON Parsing:** Excellent at extracting structured data from natural language
+
+**Best Use Cases:**
+- High-volume cost analysis queries
+- Real-time cost monitoring dashboards
+- Cost optimization analysis
+- Budget tracking and alerts
+
+### 3. OpenAI
+
+**Advantages:** Reliable, well-documented, consistent results
+**Setup:**
+
+```bash
+# Get API key from https://platform.openai.com/api-keys
+export OPENAI_API_KEY="sk-your-key-here"
+
+# Configure OpenAI
+aws-cost-cli configure --provider openai --model gpt-3.5-turbo
+
+# Test configuration
+aws-cost-cli test-provider openai
+```
+
+### 4. Anthropic Claude
+
+**Advantages:** Excellent for complex analysis, safety-focused
+**Setup:**
+
+```bash
+# Get API key from https://console.anthropic.com/
+export ANTHROPIC_API_KEY="sk-ant-your-key-here"
+
+# Configure Anthropic
+aws-cost-cli configure --provider anthropic --model claude-3-haiku-20240307
+
+# Test configuration
+aws-cost-cli test-provider anthropic
+```
+
+### 5. AWS Bedrock
+
+**Advantages:** AWS-native, uses existing AWS credentials
+**Setup:**
+
+```bash
+# Ensure AWS credentials are configured
+aws configure
+
+# Configure Bedrock
+aws-cost-cli configure --provider bedrock --region us-east-1
+
+# Test configuration
+aws-cost-cli test-provider bedrock
+```
+
+### Provider Management Commands
+
+```bash
+# List all providers and their status
+aws-cost-cli list-providers
+
+# Test specific provider
+aws-cost-cli test-provider gemini
+aws-cost-cli test-provider ollama
+aws-cost-cli test-provider openai
+
+# Override provider for single query (doesn't change config)
+aws-cost-cli query "EC2 costs" --llm-provider gemini
+aws-cost-cli query "EC2 costs" --llm-provider ollama
+
+# Check current configuration
+aws-cost-cli config show
+
+# Change default provider permanently
+aws-cost-cli configure --provider gemini
+aws-cost-cli configure --provider ollama
+```
+
+### Advanced Provider Switching
+
+**Scenario-Based Provider Selection:**
+
+```bash
+# For privacy-sensitive queries (local processing)
+aws-cost-cli query "detailed cost breakdown" --llm-provider ollama
+
+# For fast, cost-effective queries (cloud)
+aws-cost-cli query "monthly spending summary" --llm-provider gemini
+
+# For complex analysis requiring reasoning
+aws-cost-cli query "cost optimization recommendations" --llm-provider anthropic
+
+# For AWS-native integration
+aws-cost-cli query "cross-account cost analysis" --llm-provider bedrock
+
+# For reliable, consistent results
+aws-cost-cli query "budget variance analysis" --llm-provider openai
+```
+
+**Provider Performance Comparison:**
+
+```bash
+# Compare response times across providers
+time aws-cost-cli query "EC2 costs last month" --llm-provider ollama
+time aws-cost-cli query "EC2 costs last month" --llm-provider gemini
+time aws-cost-cli query "EC2 costs last month" --llm-provider openai
+
+# Test provider availability
+aws-cost-cli test-provider ollama && echo "Ollama: Available"
+aws-cost-cli test-provider gemini && echo "Gemini: Available"
+aws-cost-cli test-provider openai && echo "OpenAI: Available"
+```
+
+**Batch Provider Testing:**
+
+```bash
+# Test all configured providers
+for provider in ollama gemini openai anthropic bedrock; do
+  echo "Testing $provider..."
+  aws-cost-cli test-provider $provider
+done
+
+# Find fastest provider for your setup
+echo "Provider speed test:"
+for provider in ollama gemini openai; do
+  echo -n "$provider: "
+  time aws-cost-cli query "test" --llm-provider $provider >/dev/null 2>&1
+done
+```
+
+### Fallback Configuration
+
+Configure automatic fallback when your primary provider fails:
+
+```yaml
+# In your config file
+llm_provider: "gemini"
+fallback_providers:
+  - "ollama"    # Local fallback
+  - "openai"    # Cloud fallback
+  - "anthropic" # Additional fallback
+```
+
+## CLI Command Reference
+
+### Core Commands
+
+#### Query Command
+
+The main command for asking cost-related questions:
+
+```bash
+# Basic usage
+aws-cost-cli query "What did I spend on EC2 last month?"
+
+# With provider override
+aws-cost-cli query "S3 costs this year" --llm-provider gemini
+
+# With output format
+aws-cost-cli query "RDS costs" --format json
+
+# With AWS profile
+aws-cost-cli query "Lambda costs" --profile production
+
+# With performance options
+aws-cost-cli query "All costs 2024" --parallel --compression --performance-metrics
+```
+
+**Query Command Options:**
+- `--llm-provider`: Override LLM provider (ollama, gemini, openai, anthropic, bedrock)
+- `--format`: Output format (simple, rich, json, llm)
+- `--profile`: AWS profile to use
+- `--parallel`: Enable parallel query execution
+- `--no-parallel`: Disable parallel execution
+- `--compression`: Enable cache compression
+- `--no-compression`: Disable cache compression
+- `--performance-metrics`: Show performance metrics after query
+
+#### Configuration Commands
+
+```bash
+# Configure LLM provider
+aws-cost-cli configure --provider gemini --model gemini-1.5-flash
+
+# Configure with API key
+aws-cost-cli configure --provider openai --api-key sk-your-key
+
+# Configure AWS profile
+aws-cost-cli configure --profile production
+
+# Configure cache settings
+aws-cost-cli configure --cache-ttl 3600
+
+# Show current configuration
+aws-cost-cli config show
+
+# Validate configuration
+aws-cost-cli config validate
+```
+
+#### Provider Management Commands
+
+```bash
+# List all providers and their status
+aws-cost-cli list-providers
+
+# Test specific provider
+aws-cost-cli test-provider gemini
+aws-cost-cli test-provider ollama
+
+# Test all providers
+aws-cost-cli test
+```
+
+#### Health and Monitoring Commands
+
+```bash
+# Basic health check
+aws-cost-cli health check
+
+# Detailed health check
+aws-cost-cli health check --detailed
+
+# Readiness check (for containers)
+aws-cost-cli health ready
+
+# Start health check server
+aws-cost-cli health serve --port 8081
+
+# Performance monitoring
+aws-cost-cli performance
+aws-cost-cli performance --hours 24 --format json
+```
+
+#### Cache Management Commands
+
+```bash
+# Show cache status
+aws-cost-cli cache status
+
+# Clear cache
+aws-cost-cli cache clear
+
+# Clear cache for specific queries
+aws-cost-cli cache clear --pattern "EC2*"
+```
+
+#### Profile Management Commands
+
+```bash
+# List AWS profiles
+aws-cost-cli list-profiles
+
+# Set default profile
+aws-cost-cli configure --default-profile production
+```
+
+### Command Examples by Use Case
+
+#### Daily Cost Monitoring
+
+```bash
+# Morning cost check
+aws-cost-cli query "How much have I spent on AWS today?"
+
+# Weekly summary
+aws-cost-cli query "What was my AWS spending this week compared to last week?"
+
+# Monthly budget check
+aws-cost-cli query "Am I on track for my monthly AWS budget of $5000?"
+```
+
+#### Cost Analysis and Optimization
+
+```bash
+# Service breakdown
+aws-cost-cli query "What are my top 10 AWS services by cost this month?"
+
+# Cost trends
+aws-cost-cli query "Show me monthly cost trends for the last 6 months"
+
+# Optimization opportunities
+aws-cost-cli query "What are my biggest cost optimization opportunities?"
+
+# Regional analysis
+aws-cost-cli query "Compare AWS costs between us-east-1 and eu-west-1"
+```
+
+#### Provider-Specific Workflows
+
+```bash
+# Privacy-focused analysis (local processing)
+aws-cost-cli query "Detailed cost breakdown with sensitive data" --llm-provider ollama
+
+# Fast cloud analysis
+aws-cost-cli query "Quick monthly summary" --llm-provider gemini
+
+# Complex analysis requiring reasoning
+aws-cost-cli query "Cost optimization strategy recommendations" --llm-provider anthropic
+
+# AWS-native integration
+aws-cost-cli query "Cross-account cost analysis" --llm-provider bedrock
+```
+
+#### Troubleshooting and Testing
+
+```bash
+# Test system health
+aws-cost-cli health check --detailed
+
+# Test all providers
+for provider in ollama gemini openai anthropic bedrock; do
+  echo "Testing $provider..."
+  aws-cost-cli test-provider $provider
+done
+
+# Debug query issues
+aws-cost-cli query "test query" --debug --llm-provider gemini
+
+# Performance comparison
+time aws-cost-cli query "EC2 costs" --llm-provider ollama
+time aws-cost-cli query "EC2 costs" --llm-provider gemini
+```
+
+### Environment Variables Reference
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `AWS_COST_CLI_LLM_PROVIDER` | Default LLM provider | `ollama` | `gemini` |
+| `AWS_COST_CLI_DEFAULT_PROFILE` | Default AWS profile | None | `production` |
+| `AWS_COST_CLI_CACHE_TTL` | Cache TTL in seconds | `3600` | `7200` |
+| `AWS_COST_CLI_OUTPUT_FORMAT` | Default output format | `simple` | `rich` |
+| `GEMINI_API_KEY` | Google Gemini API key | None | `your-api-key` |
+| `OPENAI_API_KEY` | OpenAI API key | None | `sk-your-key` |
+| `ANTHROPIC_API_KEY` | Anthropic API key | None | `sk-ant-your-key` |
+
+### Exit Codes
+
+The CLI returns standard exit codes for scripting:
+
+- `0`: Success
+- `1`: General error (invalid arguments, configuration issues)
+- `2`: AWS API error (credentials, permissions, service issues)
+- `3`: LLM provider error (API key, quota, network issues)
+- `4`: Cache error (disk space, permissions)
+- `5`: Health check failure (system unhealthy)
 
 ### Development vs Production Dependencies
 
@@ -714,9 +1140,10 @@ Never commit sensitive information to version control:
 # Database credentials
 export AWS_COST_CLI_DB_PASSWORD="secure-password"
 
-# LLM API keys
+# LLM API keys (choose providers you want to use)
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
+export GEMINI_API_KEY="your-gemini-api-key"
 
 # AWS credentials (if not using profiles)
 export AWS_ACCESS_KEY_ID="your-access-key"
@@ -804,6 +1231,11 @@ spec:
             secretKeyRef:
               name: aws-cost-cli-secrets  
               key: anthropic-api-key
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-cost-cli-secrets  
+              key: gemini-api-key
         livenessProbe:
           httpGet:
             path: /health
@@ -885,13 +1317,22 @@ aws-cost-cli configure --cache-ttl 7200  # 2 hours
 ### LLM Provider Optimization
 
 ```bash
+# Default provider (local, no API key required)
+aws-cost-cli configure --provider ollama --model llama2
+
 # Switch LLM providers for different use cases
+aws-cost-cli configure --provider gemini     # Fast and cost-effective cloud option
 aws-cost-cli configure --provider anthropic  # Better for complex analysis
-aws-cost-cli configure --provider ollama     # For privacy-sensitive environments
+aws-cost-cli configure --provider openai     # Reliable cloud option
 aws-cost-cli configure --provider bedrock    # For AWS-native integration
 
 # Test LLM provider performance
-aws-cost-cli test --provider openai
+aws-cost-cli test-provider ollama    # Test local provider
+aws-cost-cli test-provider gemini    # Test Gemini provider
+aws-cost-cli test-provider openai    # Test OpenAI provider
+
+# Override provider for single query
+aws-cost-cli query "EC2 costs last month" --llm-provider gemini
 ```
 
 ## Troubleshooting
@@ -949,6 +1390,8 @@ aws-cost-cli health check | grep -i aws
 
 #### 3. LLM Provider Issues
 
+**General Provider Troubleshooting:**
+
 ```bash
 # Test LLM connectivity
 aws-cost-cli test
@@ -956,11 +1399,155 @@ aws-cost-cli test
 # Check API key configuration
 aws-cost-cli config show
 
-# Switch to alternative provider
-aws-cost-cli configure --provider ollama  # Local fallback
+# List all providers and their status
+aws-cost-cli list-providers
 
 # Check LLM provider status in health check
 aws-cost-cli health check | grep -i llm
+```
+
+**Provider-Specific Troubleshooting:**
+
+##### Ollama (Local Provider - Default)
+
+```bash
+# Check if Ollama is running
+curl http://localhost:11434/api/version
+
+# Start Ollama if not running
+ollama serve
+
+# Check available models
+ollama list
+
+# Download a model if none available
+ollama pull llama2
+
+# Test Ollama provider
+aws-cost-cli test-provider ollama
+
+# Configure Ollama with specific model
+aws-cost-cli configure --provider ollama --model llama2
+
+# Troubleshoot Ollama connection issues
+ps aux | grep ollama  # Check if process is running
+netstat -an | grep 11434  # Check if port is open
+```
+
+**Common Ollama Issues:**
+- **"Connection refused"**: Ollama service not running → Run `ollama serve`
+- **"Model not found"**: No models downloaded → Run `ollama pull llama2`
+- **Slow responses**: Model too large for hardware → Use smaller model like `llama2:7b-chat`
+- **High memory usage**: Large model loaded → Use smaller model or increase system RAM
+
+##### Google Gemini
+
+```bash
+# Check if API key is set
+echo $GEMINI_API_KEY
+
+# Set API key if missing
+export GEMINI_API_KEY="your-api-key-here"
+
+# Test Gemini provider
+aws-cost-cli test-provider gemini
+
+# Configure Gemini
+aws-cost-cli configure --provider gemini --model gemini-1.5-flash
+
+# Test with specific query
+aws-cost-cli query "test query" --llm-provider gemini
+```
+
+**Common Gemini Issues:**
+- **"Invalid API key"**: Wrong/expired key → Get new key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+- **"Package not installed"**: Missing dependency → Run `pip install google-generativeai>=0.3.0`
+- **"Quota exceeded"**: API limits reached → Check usage in Google AI Studio or switch provider
+- **"Model not found"**: Invalid model name → Use `gemini-1.5-flash` or `gemini-1.5-pro`
+
+##### OpenAI
+
+```bash
+# Check if API key is set
+echo $OPENAI_API_KEY
+
+# Set API key if missing
+export OPENAI_API_KEY="sk-your-key-here"
+
+# Test OpenAI provider
+aws-cost-cli test-provider openai
+
+# Configure OpenAI
+aws-cost-cli configure --provider openai --model gpt-3.5-turbo
+```
+
+**Common OpenAI Issues:**
+- **"Invalid API key"**: Wrong/expired key → Get new key from [OpenAI Platform](https://platform.openai.com/api-keys)
+- **"Quota exceeded"**: Usage limits reached → Check billing in OpenAI dashboard
+- **"Model not found"**: Invalid model → Use `gpt-3.5-turbo` or `gpt-4`
+- **"Rate limit exceeded"**: Too many requests → Wait or upgrade plan
+
+##### Anthropic Claude
+
+```bash
+# Check if API key is set
+echo $ANTHROPIC_API_KEY
+
+# Set API key if missing
+export ANTHROPIC_API_KEY="sk-ant-your-key-here"
+
+# Test Anthropic provider
+aws-cost-cli test-provider anthropic
+
+# Configure Anthropic
+aws-cost-cli configure --provider anthropic --model claude-3-haiku-20240307
+```
+
+**Common Anthropic Issues:**
+- **"Invalid API key"**: Wrong/expired key → Get new key from [Anthropic Console](https://console.anthropic.com/)
+- **"Usage limit exceeded"**: Monthly limits reached → Check usage in Anthropic console
+- **"Model not available"**: Invalid model → Use `claude-3-haiku-20240307` or `claude-3-sonnet-20240229`
+
+##### AWS Bedrock
+
+```bash
+# Check AWS credentials
+aws sts get-caller-identity
+
+# Test Bedrock provider
+aws-cost-cli test-provider bedrock
+
+# Configure Bedrock
+aws-cost-cli configure --provider bedrock --region us-east-1
+
+# Check Bedrock permissions
+aws bedrock list-foundation-models --region us-east-1
+```
+
+**Common Bedrock Issues:**
+- **"Access denied"**: Missing IAM permissions → Add `bedrock:InvokeModel` permission
+- **"Region not supported"**: Bedrock not available → Use `us-east-1` or `us-west-2`
+- **"Model not found"**: Invalid model ID → Use `anthropic.claude-3-haiku-20240307-v1:0`
+- **"Credentials not found"**: AWS credentials not configured → Run `aws configure`
+
+**Provider Fallback Troubleshooting:**
+
+```bash
+# Test fallback configuration
+aws-cost-cli config show | grep -A5 fallback
+
+# Test each fallback provider
+aws-cost-cli test-provider ollama
+aws-cost-cli test-provider gemini
+aws-cost-cli test-provider openai
+
+# Force fallback by disabling primary provider
+aws-cost-cli query "test" --llm-provider nonexistent  # Should fallback
+
+# Configure robust fallback chain
+aws-cost-cli configure --provider gemini
+# Then edit config file to add:
+# fallback_providers: ["ollama", "openai", "anthropic"]
 ```
 
 #### 4. Cost Explorer Access
@@ -1078,7 +1665,10 @@ aws-cost-cli health ready || exit 1
 
 - **Use caching** for repeated queries (configure appropriate TTL)
 - **Batch similar queries** together to reduce API calls
-- **Choose appropriate LLM provider** for your use case (cost vs. accuracy)
+- **Choose appropriate LLM provider** for your use case:
+  - **Ollama** (default): Local processing, no API costs, privacy-focused
+  - **Gemini**: Fast cloud processing, cost-effective
+  - **OpenAI/Anthropic**: Premium cloud options for complex analysis
 - **Monitor API usage** and costs regularly
 - **Use production dependencies** for high-performance deployments
 - **Configure connection pooling** for better AWS API performance

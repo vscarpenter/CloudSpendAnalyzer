@@ -162,7 +162,8 @@ class QueryParsingError(AWSCostCLIError):
             "Examples: 'How much did I spend on EC2 last month?', 'What are my total AWS costs this year?'",
         ]
 
-        if original_query:
+        # Only override message if it's the default message and original_query is provided
+        if original_query and message == "Failed to parse natural language query":
             message = f"Failed to parse query: '{original_query}'"
 
         super().__init__(message, "QUERY_PARSING_ERROR", suggestions)

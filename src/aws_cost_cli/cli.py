@@ -30,7 +30,7 @@ from .exceptions import (
     format_error_message,
 )
 from .health import HealthChecker, create_health_check_server
-
+from .provider_factory import ProviderFactory
 
 # Global console for rich output
 console = Console()
@@ -59,6 +59,13 @@ def cli(ctx):
     "output_format",
     type=click.Choice(["simple", "rich", "llm", "json"], case_sensitive=False),
     help="Output format (defaults to config setting)",
+)
+@click.option(
+    "--llm-provider",
+    type=click.Choice(
+        ["openai", "anthropic", "bedrock", "ollama", "gemini"], case_sensitive=False
+    ),
+    help="Override configured LLM provider for this query only (default: ollama)",
 )
 @click.option(
     "--config-file",
@@ -94,6 +101,7 @@ def query(
     profile: Optional[str],
     fresh: bool,
     output_format: Optional[str],
+    llm_provider: Optional[str],
     config_file: Optional[str],
     parallel: bool,
     compression: bool,
@@ -106,6 +114,7 @@ def query(
         aws-cost-cli query "How much did I spend on EC2 last month?"
         aws-cost-cli query "What are my S3 costs this year?" --profile production
         aws-cost-cli query "Show me RDS spending for Q1" --fresh --format rich
+        aws-cost-cli query "EC2 costs last month" --llm-provider gemini
     """
     try:
         # Create query context
@@ -119,7 +128,24 @@ def query(
             enable_compression=compression,
             max_chunk_days=max_chunk_days,
             show_performance_metrics=performance_metrics,
+            llm_provider_override=llm_provider.lower() if llm_provider else None,
         )
+
+        # Validate provider override if specified
+        if llm_provider:
+            valid_providers = ["openai", "anthropic", "bedrock", "ollama", "gemini"]
+            if llm_provider.lower() not in valid_providers:
+                console.print(
+                    Panel(
+                        Text(
+                            f"Invalid LLM provider '{llm_provider}'. Available providers: {', '.join(valid_providers)}",
+                            style="bold red",
+                        ),
+                        title="Invalid Provider",
+                        border_style="red",
+                    )
+                )
+                sys.exit(1)
 
         # Initialize pipeline
         pipeline = QueryPipeline(config_path=config_file)
@@ -663,7 +689,7 @@ def pipeline_status(config_file: Optional[str]):
 @click.option(
     "--provider",
     type=click.Choice(
-        ["openai", "anthropic", "bedrock", "ollama"], case_sensitive=False
+        ["openai", "anthropic", "bedrock", "ollama", "gemini"], case_sensitive=False
     ),
     required=True,
     help="LLM provider to configure",
@@ -673,15 +699,28 @@ def pipeline_status(config_file: Optional[str]):
 )
 @click.option(
     "--model",
-    help="Model to use (e.g., gpt-3.5-turbo, claude-3-haiku-20240307, anthropic.claude-3-haiku-20240307-v1:0, llama2)",
+    help="Model to use (e.g., gpt-3.5-turbo, claude-3-haiku-20240307, anthropic.claude-3-haiku-20240307-v1:0, gpt-oss:20b, gemini-1.5-flash, gemini-1.5-pro)",
 )
 @click.option(
     "--base-url", help="Base URL for Ollama (default: http://localhost:11434)"
+)
+@click.option(
+    "--timeout", type=int, help="Request timeout for Ollama in seconds (default: 60)"
 )
 @click.option("--region", help="AWS region for Bedrock (default: us-east-1)")
 @click.option(
     "--profile",
     help="AWS profile for Bedrock (uses default AWS credentials if not specified)",
+)
+@click.option(
+    "--temperature",
+    type=float,
+    help="Temperature for LLM responses (0.0-1.0, default varies by provider)",
+)
+@click.option(
+    "--max-tokens",
+    type=int,
+    help="Maximum tokens for LLM responses (default varies by provider)",
 )
 @click.option(
     "--config-file",
@@ -694,17 +733,24 @@ def configure(
     api_key: Optional[str],
     model: Optional[str],
     base_url: Optional[str],
+    timeout: Optional[int],
     region: Optional[str],
     profile: Optional[str],
+    temperature: Optional[float],
+    max_tokens: Optional[int],
     config_file: Optional[str],
 ):
     """Configure LLM provider settings.
 
+    Default provider is 'ollama' for local processing without API keys.
+
     Examples:
+        aws-cost-cli configure --provider ollama --model llama2  # Default, local processing
         aws-cost-cli configure --provider openai --api-key sk-...
         aws-cost-cli configure --provider anthropic --api-key sk-ant-...
+        aws-cost-cli configure --provider gemini --api-key your-gemini-api-key --model gemini-1.5-flash
         aws-cost-cli configure --provider bedrock --model anthropic.claude-3-haiku-20240307-v1:0 --region us-east-1
-        aws-cost-cli configure --provider ollama --model llama2
+        aws-cost-cli configure --provider gemini --api-key your-key --model gemini-1.5-pro --temperature 0.2 --max-tokens 1000
     """
     try:
         config_manager = ConfigManager()
@@ -726,34 +772,78 @@ def configure(
         if not config.llm_config:
             config.llm_config = {}
 
-        config.llm_config["provider"] = provider.lower()
+        # Initialize provider-specific configuration
+        provider_key = provider.lower()
+        if provider_key not in config.llm_config:
+            config.llm_config[provider_key] = {}
 
+        provider_config = config.llm_config[provider_key]
+
+        # Set API key if provided
         if api_key:
-            config.llm_config["api_key"] = api_key
+            provider_config["api_key"] = api_key
 
+        # Set model with provider-specific defaults
         if model:
-            config.llm_config["model"] = model
-        elif provider.lower() == "openai" and "model" not in config.llm_config:
-            config.llm_config["model"] = "gpt-3.5-turbo"
-        elif provider.lower() == "anthropic" and "model" not in config.llm_config:
-            config.llm_config["model"] = "claude-3-haiku-20240307"
-        elif provider.lower() == "bedrock" and "model" not in config.llm_config:
-            config.llm_config["model"] = "anthropic.claude-3-haiku-20240307-v1:0"
-        elif provider.lower() == "ollama" and "model" not in config.llm_config:
-            config.llm_config["model"] = "llama2"
+            provider_config["model"] = model
+        elif "model" not in provider_config:
+            if provider_key == "openai":
+                provider_config["model"] = "gpt-3.5-turbo"
+            elif provider_key == "anthropic":
+                provider_config["model"] = "claude-3-haiku-20240307"
+            elif provider_key == "bedrock":
+                provider_config["model"] = "anthropic.claude-3-haiku-20240307-v1:0"
+            elif provider_key == "ollama":
+                provider_config["model"] = "gpt-oss:20b"
+            elif provider_key == "gemini":
+                provider_config["model"] = "gemini-1.5-flash"
 
+        # Set provider-specific options
         if base_url:
-            config.llm_config["base_url"] = base_url
-        elif provider.lower() == "ollama" and "base_url" not in config.llm_config:
-            config.llm_config["base_url"] = "http://localhost:11434"
+            provider_config["base_url"] = base_url
+        elif provider_key == "ollama" and "base_url" not in provider_config:
+            provider_config["base_url"] = "http://localhost:11434"
+
+        if timeout:
+            provider_config["timeout"] = timeout
+        elif provider_key == "ollama" and "timeout" not in provider_config:
+            provider_config["timeout"] = 60
 
         if region:
-            config.llm_config["region"] = region
-        elif provider.lower() == "bedrock" and "region" not in config.llm_config:
-            config.llm_config["region"] = "us-east-1"
+            provider_config["region"] = region
+        elif provider_key == "bedrock" and "region" not in provider_config:
+            provider_config["region"] = "us-east-1"
 
         if profile:
-            config.llm_config["profile"] = profile
+            provider_config["profile"] = profile
+
+        # Set temperature if provided
+        if temperature is not None:
+            if temperature < 0.0 or temperature > 1.0:
+                raise click.BadParameter("Temperature must be between 0.0 and 1.0")
+            provider_config["temperature"] = temperature
+        elif "temperature" not in provider_config:
+            # Set provider-specific default temperatures
+            if provider_key == "gemini":
+                provider_config["temperature"] = 0.1
+            elif provider_key == "openai":
+                provider_config["temperature"] = 0.1
+            elif provider_key == "anthropic":
+                provider_config["temperature"] = 0.1
+
+        # Set max_tokens if provided
+        if max_tokens is not None:
+            if max_tokens <= 0:
+                raise click.BadParameter("Max tokens must be positive")
+            provider_config["max_tokens"] = max_tokens
+        elif "max_tokens" not in provider_config:
+            # Set provider-specific default max_tokens
+            if provider_key == "gemini":
+                provider_config["max_tokens"] = 500
+            elif provider_key == "openai":
+                provider_config["max_tokens"] = 500
+            elif provider_key == "anthropic":
+                provider_config["max_tokens"] = 500
 
         # Save configuration
         config_manager.save_config(config, str(config_path))
@@ -776,12 +866,19 @@ def configure(
             console.print(f"🌍 Region: {region}")
         if profile:
             console.print(f"👤 AWS Profile: {profile}")
+        if temperature is not None:
+            console.print(f"🌡️  Temperature: {temperature}")
+        if max_tokens is not None:
+            console.print(f"📏 Max Tokens: {max_tokens}")
 
         # Test the configuration
         console.print("\n🧪 Testing configuration...")
 
         try:
-            query_parser = QueryParser(config.llm_config)
+            from dataclasses import asdict
+
+            config_dict = asdict(config)
+            query_parser = QueryParser(config.llm_config, config_dict)
             _test_result = query_parser.parse_query("test query for configuration")
             console.print("✅ LLM provider configuration is working")
         except Exception as e:
@@ -1276,7 +1373,9 @@ def export(
         # Export data
         console.print(f"📊 Exporting data to {export_format.upper()} format...")
 
-        export_manager = ExportManager()
+        export_manager = ExportManager(
+            date_formatting_config=pipeline.config.date_formatting
+        )
 
         # Check if format is available
         if export_format.lower() not in export_manager.get_available_formats():
@@ -1831,7 +1930,9 @@ def email_report(
             f"📧 Sending email report to {len(recipient_list)} recipient(s)..."
         )
 
-        export_manager = ExportManager()
+        export_manager = ExportManager(
+            date_formatting_config=pipeline.config.date_formatting
+        )
 
         # Filter available attachment formats
         available_formats = export_manager.get_available_formats()
@@ -1965,7 +2066,10 @@ def test(ctx, debug: bool):
     # Test 4: LLM Provider
     console.print("\n4️⃣  Testing LLM provider...")
     try:
-        query_parser = QueryParser(config.llm_config)
+        from dataclasses import asdict
+
+        config_dict = asdict(config)
+        query_parser = QueryParser(config.llm_config, config_dict)
         # Try a simple test query
         _test_result = query_parser.parse_query("test")
         console.print("   ✅ LLM provider is working")
@@ -2214,6 +2318,618 @@ def _display_health_status(health_status):
         console.print(f"❌ {summary['unhealthy_checks']} checks unhealthy")
 
     console.print(f"⏱️  Uptime: {summary['uptime_seconds']:.1f} seconds")
+
+
+@cli.command()
+@click.option(
+    "--config-file",
+    "-c",
+    type=click.Path(exists=True),
+    help="Path to configuration file",
+)
+def list_providers(config_file: Optional[str]):
+    """List all available LLM providers and their configuration status.
+
+    Shows which providers are configured and ready to use, and what's needed
+    to configure providers that aren't set up yet.
+
+    Examples:
+        aws-cost-cli list-providers
+        aws-cost-cli list-providers --config-file custom_config.yaml
+    """
+    try:
+        # Load configuration
+        config_manager = ConfigManager()
+        try:
+            config = config_manager.load_config(config_file)
+        except FileNotFoundError:
+            config = Config()
+
+        # Get provider status
+        provider_status = ProviderFactory.get_provider_configuration_status(
+            config.llm_config
+        )
+        all_providers = ProviderFactory.get_all_provider_names()
+
+        console.print(
+            Panel(
+                Text("🤖 LLM Provider Status", style="bold blue"), border_style="blue"
+            )
+        )
+
+        # Create table for provider status
+        table = Table(show_header=True, header_style="bold blue")
+        table.add_column("Provider", style="cyan", width=12)
+        table.add_column("Status", width=12)
+        table.add_column("Configuration", style="dim")
+        table.add_column("Requirements", style="dim")
+
+        # Provider requirements mapping
+        provider_requirements = {
+            "openai": "OPENAI_API_KEY environment variable or api_key in config",
+            "anthropic": "ANTHROPIC_API_KEY environment variable or api_key in config",
+            "bedrock": "AWS credentials configured (uses default AWS profile)",
+            "ollama": "Ollama server running (default: http://localhost:11434)",
+            "gemini": "GEMINI_API_KEY environment variable or api_key in config",
+        }
+
+        for provider_name in all_providers:
+            status_info = provider_status.get(provider_name, {})
+            configured = status_info.get("configured", False)
+            available = status_info.get("available", False)
+            error = status_info.get("error")
+
+            # Status display
+            if available:
+                status_display = "✅ Ready"
+                status_style = "green"
+            elif configured:
+                status_display = "⚠️  Configured"
+                status_style = "yellow"
+            else:
+                status_display = "❌ Not configured"
+                status_style = "red"
+
+            # Configuration details
+            config_details = []
+            if provider_name in config.llm_config:
+                provider_config = config.llm_config[provider_name]
+                if "model" in provider_config:
+                    config_details.append(f"Model: {provider_config['model']}")
+                if "base_url" in provider_config:
+                    config_details.append(f"URL: {provider_config['base_url']}")
+                if "region" in provider_config:
+                    config_details.append(f"Region: {provider_config['region']}")
+
+            config_text = (
+                "; ".join(config_details) if config_details else "Default settings"
+            )
+
+            # Show error if present
+            if error and not available:
+                config_text = f"❌ {error}"
+
+            # Requirements
+            requirements = provider_requirements.get(
+                provider_name, "No special requirements"
+            )
+
+            table.add_row(
+                provider_name.title(),
+                f"[{status_style}]{status_display}[/{status_style}]",
+                config_text,
+                requirements,
+            )
+
+        console.print(table)
+
+        # Show current provider
+        current_provider = config.llm_provider
+        console.print(f"\n🎯 Current default provider: {current_provider}")
+
+        # Show available providers
+        available_providers = ProviderFactory.get_available_providers(config.llm_config)
+        if available_providers:
+            console.print(f"✅ Available providers: {', '.join(available_providers)}")
+        else:
+            console.print("❌ No providers are currently available")
+
+        # Show configuration tips
+        console.print("\n💡 Configuration tips:")
+        console.print("   • Set environment variables for API keys (recommended)")
+        console.print(
+            "   • Use 'aws-cost-cli configure --provider <name>' to set up a provider"
+        )
+        console.print("   • Use 'aws-cost-cli test-provider <name>' to test a provider")
+        console.print("   • Ollama is recommended for local/offline usage")
+
+    except Exception as e:
+        console.print(
+            Panel(
+                Text(f"❌ Failed to list providers: {str(e)}", style="bold red"),
+                title="Error",
+                border_style="red",
+            )
+        )
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument(
+    "provider",
+    type=click.Choice(
+        ["openai", "anthropic", "bedrock", "ollama", "gemini"], case_sensitive=False
+    ),
+)
+@click.option(
+    "--config-file",
+    "-c",
+    type=click.Path(exists=True),
+    help="Path to configuration file",
+)
+def test_provider(provider: str, config_file: Optional[str]):
+    """Test a specific LLM provider configuration.
+
+    Verifies that the provider is properly configured and can successfully
+    process queries. This helps troubleshoot configuration issues.
+
+    Examples:
+        aws-cost-cli test-provider openai
+        aws-cost-cli test-provider gemini --config-file custom_config.yaml
+        aws-cost-cli test-provider ollama
+    """
+    try:
+        provider = provider.lower()
+
+        # Load configuration
+        config_manager = ConfigManager()
+        try:
+            config = config_manager.load_config(config_file)
+        except FileNotFoundError:
+            config = Config()
+
+        console.print(f"🧪 Testing {provider.title()} provider configuration...")
+
+        # Test provider creation
+        try:
+            provider_instance = ProviderFactory.create_provider(
+                provider, config.llm_config
+            )
+            console.print("✅ Provider instance created successfully")
+        except Exception as e:
+            console.print(
+                Panel(
+                    Text(f"❌ Failed to create provider: {str(e)}", style="bold red"),
+                    title="Configuration Error",
+                    border_style="red",
+                )
+            )
+
+            # Show configuration help
+            console.print("\n💡 Configuration help:")
+            if provider == "openai":
+                console.print("   • Set OPENAI_API_KEY environment variable")
+                console.print(
+                    "   • Or run: aws-cost-cli configure --provider openai --api-key <your-key>"
+                )
+            elif provider == "anthropic":
+                console.print("   • Set ANTHROPIC_API_KEY environment variable")
+                console.print(
+                    "   • Or run: aws-cost-cli configure --provider anthropic --api-key <your-key>"
+                )
+            elif provider == "gemini":
+                console.print("   • Set GEMINI_API_KEY environment variable")
+                console.print(
+                    "   • Or run: aws-cost-cli configure --provider gemini --api-key <your-key>"
+                )
+            elif provider == "bedrock":
+                console.print("   • Ensure AWS credentials are configured")
+                console.print("   • Run: aws configure (or set AWS_PROFILE)")
+                console.print(
+                    "   • Or run: aws-cost-cli configure --provider bedrock --region <region>"
+                )
+            elif provider == "ollama":
+                console.print("   • Ensure Ollama server is running")
+                console.print("   • Default URL: http://localhost:11434")
+                console.print(
+                    "   • Or run: aws-cost-cli configure --provider ollama --base-url <url>"
+                )
+
+            sys.exit(1)
+
+        # Test provider availability
+        try:
+            is_available = provider_instance.is_available()
+            if is_available:
+                console.print("✅ Provider is available and ready")
+            else:
+                console.print("⚠️  Provider created but not available")
+                sys.exit(1)
+        except Exception as e:
+            console.print(f"⚠️  Provider availability check failed: {str(e)}")
+
+        # Test actual query parsing
+        console.print("🔍 Testing query parsing...")
+        test_query = "What did I spend on EC2 last month?"
+
+        try:
+            result = provider_instance.parse_query(test_query)
+            console.print("✅ Query parsing successful")
+
+            # Show parsed result details
+            console.print("\n📊 Parsed query details:")
+            if isinstance(result, dict):
+                for key, value in result.items():
+                    if key == "date_range" and isinstance(value, dict):
+                        console.print(
+                            f"   • {key}: {value.get('start', 'N/A')} to {value.get('end', 'N/A')}"
+                        )
+                    else:
+                        console.print(f"   • {key}: {value}")
+            else:
+                console.print(f"   • Result: {result}")
+
+        except Exception as e:
+            console.print(f"❌ Query parsing failed: {str(e)}")
+
+            # Provider-specific troubleshooting
+            if provider == "ollama":
+                console.print("\n🔧 Ollama troubleshooting:")
+                console.print(
+                    "   • Check if Ollama server is running: curl http://localhost:11434"
+                )
+                console.print("   • Check if model is available: ollama list")
+                console.print("   • Pull model if needed: ollama pull gpt-oss:20b")
+            elif provider in ["openai", "anthropic", "gemini"]:
+                console.print(f"\n🔧 {provider.title()} troubleshooting:")
+                console.print(
+                    "   • Verify API key is correct and has sufficient credits"
+                )
+                console.print("   • Check network connectivity")
+                console.print("   • Verify model name is correct")
+            elif provider == "bedrock":
+                console.print("\n🔧 Bedrock troubleshooting:")
+                console.print("   • Verify AWS credentials have Bedrock permissions")
+                console.print("   • Check if model is available in your region")
+                console.print("   • Verify region configuration")
+
+            sys.exit(1)
+
+        # Show provider configuration details
+        console.print(f"\n⚙️  {provider.title()} configuration:")
+        if provider in config.llm_config:
+            provider_config = config.llm_config[provider]
+            for key, value in provider_config.items():
+                if "api_key" in key.lower():
+                    # Mask API keys for security
+                    masked_value = f"{value[:8]}..." if len(value) > 8 else "***"
+                    console.print(f"   • {key}: {masked_value}")
+                else:
+                    console.print(f"   • {key}: {value}")
+        else:
+            console.print("   • Using default configuration")
+
+        console.print(f"\n🎉 {provider.title()} provider is working correctly!")
+        console.print(
+            f'💡 You can now use: aws-cost-cli query "your question" --llm-provider {provider}'
+        )
+
+    except Exception as e:
+        console.print(
+            Panel(
+                Text(f"❌ Provider test failed: {str(e)}", style="bold red"),
+                title="Test Error",
+                border_style="red",
+            )
+        )
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--hours",
+    "-h",
+    type=int,
+    default=24,
+    help="Number of hours to include in performance summary (default: 24)",
+)
+@click.option(
+    "--provider",
+    "-p",
+    type=click.Choice(
+        ["openai", "anthropic", "bedrock", "ollama", "gemini"], case_sensitive=False
+    ),
+    help="Show performance for specific provider only",
+)
+def provider_performance(hours: int, provider: Optional[str]):
+    """Show LLM provider performance metrics and statistics.
+
+    Displays performance metrics including response times, success rates,
+    error rates, and health status for all configured LLM providers.
+
+    Examples:
+        aws-cost-cli provider-performance
+        aws-cost-cli provider-performance --hours 48
+        aws-cost-cli provider-performance --provider openai
+    """
+    try:
+        from .query_processor import get_performance_monitor
+
+        monitor = get_performance_monitor()
+        summary = monitor.get_performance_summary(hours)
+
+        console.print(f"📊 LLM Provider Performance Summary (Last {hours} hours)")
+        console.print()
+
+        if not summary["providers"]:
+            console.print("ℹ️  No provider performance data available yet.")
+            console.print("💡 Run some queries to generate performance metrics.")
+            return
+
+        # Overall statistics
+        overall = summary["overall"]
+        if overall["total_requests"] > 0:
+            console.print("🌐 Overall Statistics:")
+            console.print(f"   • Total Requests: {overall['total_requests']}")
+            console.print(f"   • Success Rate: {overall['average_success_rate']:.1f}%")
+            console.print(f"   • Healthy Providers: {overall['healthy_providers']}")
+            console.print(f"   • Degraded Providers: {overall['degraded_providers']}")
+            console.print(f"   • Unhealthy Providers: {overall['unhealthy_providers']}")
+            console.print()
+
+        # Provider-specific metrics
+        providers_to_show = (
+            [provider.lower()] if provider else summary["providers"].keys()
+        )
+
+        for provider_name in providers_to_show:
+            if provider_name not in summary["providers"]:
+                console.print(f"⚠️  No performance data for provider: {provider_name}")
+                continue
+
+            metrics = summary["providers"][provider_name]
+
+            # Health status emoji
+            health_emoji = {
+                "healthy": "🟢",
+                "degraded": "🟡",
+                "unhealthy": "🔴",
+                "unknown": "⚪",
+            }.get(metrics["health_status"], "⚪")
+
+            console.print(f"{health_emoji} {provider_name.title()} Provider:")
+            console.print(f"   • Status: {metrics['health_status'].title()}")
+            console.print(f"   • Requests: {metrics['request_count']}")
+            console.print(f"   • Success Rate: {metrics['success_rate']:.1f}%")
+            console.print(f"   • Error Rate: {metrics['error_rate']:.1f}%")
+
+            if metrics["average_response_time_ms"] > 0:
+                console.print(
+                    f"   • Avg Response Time: {metrics['average_response_time_ms']:.0f}ms"
+                )
+                if metrics["min_response_time_ms"] and metrics["max_response_time_ms"]:
+                    console.print(
+                        f"   • Response Time Range: {metrics['min_response_time_ms']:.0f}ms - {metrics['max_response_time_ms']:.0f}ms"
+                    )
+
+            if metrics["consecutive_errors"] > 0:
+                console.print(
+                    f"   • Consecutive Errors: {metrics['consecutive_errors']}"
+                )
+
+            if metrics["timeout_count"] > 0:
+                console.print(f"   • Timeouts: {metrics['timeout_count']}")
+
+            if metrics["last_success"]:
+                last_success = datetime.fromisoformat(metrics["last_success"])
+                console.print(
+                    f"   • Last Success: {last_success.strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+
+            if metrics["last_error"]:
+                last_error = datetime.fromisoformat(metrics["last_error"])
+                console.print(
+                    f"   • Last Error: {last_error.strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+                if metrics["last_error_message"]:
+                    console.print(
+                        f"   • Last Error Message: {metrics['last_error_message'][:100]}..."
+                    )
+
+            console.print()
+
+    except Exception as e:
+        console.print(
+            Panel(
+                Text(
+                    f"❌ Failed to get performance metrics: {str(e)}", style="bold red"
+                ),
+                title="Performance Error",
+                border_style="red",
+            )
+        )
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--provider",
+    "-p",
+    type=click.Choice(
+        ["openai", "anthropic", "bedrock", "ollama", "gemini"], case_sensitive=False
+    ),
+    help="Check health of specific provider only",
+)
+@click.option(
+    "--timeout",
+    "-t",
+    type=float,
+    default=10.0,
+    help="Timeout for health checks in seconds (default: 10)",
+)
+@click.option(
+    "--config-file",
+    "-c",
+    type=click.Path(exists=True),
+    help="Path to configuration file",
+)
+def provider_health(
+    provider: Optional[str], timeout: float, config_file: Optional[str]
+):
+    """Check health status of LLM providers.
+
+    Performs health checks on configured LLM providers to verify they are
+    responding correctly and measure response times.
+
+    Examples:
+        aws-cost-cli provider-health
+        aws-cost-cli provider-health --provider openai
+        aws-cost-cli provider-health --timeout 5
+    """
+    try:
+        # Load configuration
+        config_manager = ConfigManager()
+        try:
+            config = config_manager.load_config(config_file)
+        except FileNotFoundError:
+            config = Config()
+
+        console.print("🏥 Checking LLM Provider Health...")
+        console.print()
+
+        # Get available providers
+        available_providers = ProviderFactory.get_available_providers(config.llm_config)
+
+        if not available_providers:
+            console.print("⚠️  No providers are configured and available.")
+            console.print(
+                "💡 Run 'aws-cost-cli list-providers' to see configuration status."
+            )
+            return
+
+        providers_to_check = [provider.lower()] if provider else available_providers
+
+        health_results = []
+
+        for provider_name in providers_to_check:
+            if provider_name not in available_providers:
+                console.print(
+                    f"⚠️  Provider {provider_name} is not available or configured"
+                )
+                continue
+
+            console.print(f"🔍 Checking {provider_name.title()}...")
+
+            try:
+                # Create provider instance
+                provider_instance = ProviderFactory.create_provider(
+                    provider_name, config.llm_config
+                )
+
+                # Perform health check
+                health_check = provider_instance.check_health()
+                health_results.append(health_check)
+
+                # Display result
+                if health_check.is_healthy:
+                    status_emoji = "🟢"
+                    status_text = "Healthy"
+                else:
+                    status_emoji = "🔴"
+                    status_text = "Unhealthy"
+
+                console.print(f"   {status_emoji} Status: {status_text}")
+
+                if health_check.response_time_ms:
+                    console.print(
+                        f"   ⏱️  Response Time: {health_check.response_time_ms:.0f}ms"
+                    )
+
+                if health_check.error_message:
+                    console.print(f"   ❌ Error: {health_check.error_message}")
+
+                console.print(
+                    f"   📅 Checked: {health_check.checked_at.strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+                console.print()
+
+            except Exception as e:
+                console.print(f"   ❌ Health check failed: {str(e)}")
+                console.print()
+
+        # Summary
+        if health_results:
+            healthy_count = sum(1 for result in health_results if result.is_healthy)
+            total_count = len(health_results)
+
+            console.print("📋 Health Check Summary:")
+            console.print(f"   • Healthy Providers: {healthy_count}/{total_count}")
+
+            if healthy_count == total_count:
+                console.print("   🎉 All providers are healthy!")
+            elif healthy_count == 0:
+                console.print("   ⚠️  No providers are healthy")
+            else:
+                console.print("   ⚠️  Some providers have issues")
+
+    except Exception as e:
+        console.print(
+            Panel(
+                Text(f"❌ Health check failed: {str(e)}", style="bold red"),
+                title="Health Check Error",
+                border_style="red",
+            )
+        )
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--provider",
+    "-p",
+    type=click.Choice(
+        ["openai", "anthropic", "bedrock", "ollama", "gemini"], case_sensitive=False
+    ),
+    help="Reset metrics for specific provider only",
+)
+@click.confirmation_option(
+    prompt="Are you sure you want to reset provider performance metrics?"
+)
+def reset_provider_metrics(provider: Optional[str]):
+    """Reset LLM provider performance metrics.
+
+    Clears all stored performance metrics and statistics for providers.
+    This is useful for starting fresh after configuration changes.
+
+    Examples:
+        aws-cost-cli reset-provider-metrics
+        aws-cost-cli reset-provider-metrics --provider openai
+    """
+    try:
+        from .query_processor import get_performance_monitor
+
+        monitor = get_performance_monitor()
+
+        if provider:
+            monitor.reset_metrics(provider.lower())
+            console.print(
+                f"✅ Reset performance metrics for {provider.title()} provider"
+            )
+        else:
+            monitor.reset_metrics()
+            console.print("✅ Reset performance metrics for all providers")
+
+        console.print("💡 New metrics will be collected as you use the providers.")
+
+    except Exception as e:
+        console.print(
+            Panel(
+                Text(f"❌ Failed to reset metrics: {str(e)}", style="bold red"),
+                title="Reset Error",
+                border_style="red",
+            )
+        )
+        sys.exit(1)
 
 
 def main():

@@ -18,11 +18,13 @@ try:
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.chart import LineChart, Reference
     from openpyxl.utils import get_column_letter
+
     EXCEL_AVAILABLE = True
 except ImportError:
     EXCEL_AVAILABLE = False
 
-from .models import CostData, QueryParameters
+from .models import CostData, QueryParameters, DateFormattingConfig
+from .date_formatter import DateFormatter
 
 
 class DataExporter(ABC):
@@ -39,6 +41,10 @@ class DataExporter(ABC):
 class CSVExporter(DataExporter):
     """CSV data exporter."""
 
+    def __init__(self, date_formatting_config: Optional[DateFormattingConfig] = None):
+        """Initialize CSV exporter with date formatter."""
+        self.date_formatter = DateFormatter(date_formatting_config)
+
     def export(
         self, cost_data: CostData, query_params: QueryParameters, output_path: str
     ) -> str:
@@ -53,10 +59,15 @@ class CSVExporter(DataExporter):
                 ["# Query:", getattr(query_params, "original_query", "N/A")]
             )
             writer.writerow(["# Service:", query_params.service or "All Services"])
+
+            # Format the overall time period
+            formatted_period = self.date_formatter.safe_format_time_period(
+                cost_data.time_period
+            )
             writer.writerow(
                 [
                     "# Period:",
-                    f"{cost_data.time_period.start.date()} to {cost_data.time_period.end.date()}",
+                    formatted_period,
                 ]
             )
             writer.writerow(
@@ -71,6 +82,7 @@ class CSVExporter(DataExporter):
             headers = [
                 "Period Start",
                 "Period End",
+                "Formatted Period",
                 "Total Cost",
                 "Currency",
                 "Estimated",
@@ -86,9 +98,15 @@ class CSVExporter(DataExporter):
 
             # Write data rows
             for result in cost_data.results:
+                # Format the time period for this result
+                formatted_period = self.date_formatter.safe_format_time_period(
+                    result.time_period
+                )
+
                 base_row = [
                     result.time_period.start.date().isoformat(),
                     result.time_period.end.date().isoformat(),
+                    formatted_period,
                     float(result.total.amount),
                     result.total.unit,
                     result.estimated,
@@ -169,10 +187,19 @@ class CSVExporter(DataExporter):
 class JSONExporter(DataExporter):
     """JSON data exporter."""
 
+    def __init__(self, date_formatting_config: Optional[DateFormattingConfig] = None):
+        """Initialize JSON exporter with date formatter."""
+        self.date_formatter = DateFormatter(date_formatting_config)
+
     def export(
         self, cost_data: CostData, query_params: QueryParameters, output_path: str
     ) -> str:
         """Export cost data to JSON format."""
+        # Format the overall time period
+        formatted_period = self.date_formatter.safe_format_time_period(
+            cost_data.time_period
+        )
+
         # Convert cost data to JSON-serializable format
         export_data = {
             "metadata": {
@@ -187,6 +214,7 @@ class JSONExporter(DataExporter):
                 "time_period": {
                     "start": cost_data.time_period.start.isoformat(),
                     "end": cost_data.time_period.end.isoformat(),
+                    "formatted": formatted_period,
                 },
             },
             "summary": {
@@ -202,10 +230,16 @@ class JSONExporter(DataExporter):
 
         # Add detailed results
         for result in cost_data.results:
+            # Format the time period for this result
+            formatted_period = self.date_formatter.safe_format_time_period(
+                result.time_period
+            )
+
             result_data = {
                 "time_period": {
                     "start": result.time_period.start.isoformat(),
                     "end": result.time_period.end.isoformat(),
+                    "formatted": formatted_period,
                 },
                 "total": {
                     "amount": float(result.total.amount),
@@ -283,9 +317,10 @@ class JSONExporter(DataExporter):
 class ExcelExporter(DataExporter):
     """Excel data exporter with charts and formatting."""
 
-    def __init__(self):
+    def __init__(self, date_formatting_config: Optional[DateFormattingConfig] = None):
         """Initialize Excel exporter."""
         self._check_dependencies()
+        self.date_formatter = DateFormatter(date_formatting_config)
 
     def _check_dependencies(self):
         """Check if required dependencies are available."""
@@ -367,9 +402,10 @@ class ExcelExporter(DataExporter):
         ws["B5"] = query_params.service or "All Services"
 
         ws["A6"] = "Period:"
-        ws["B6"] = (
-            f"{cost_data.time_period.start.date()} to {cost_data.time_period.end.date()}"
+        formatted_period = self.date_formatter.safe_format_time_period(
+            cost_data.time_period
         )
+        ws["B6"] = formatted_period
 
         # Total cost summary
         ws["A8"] = "Total Cost:"
@@ -439,7 +475,14 @@ class ExcelExporter(DataExporter):
     ):
         """Create the detailed data worksheet."""
         # Headers
-        headers = ["Period Start", "Period End", "Total Cost", "Currency", "Estimated"]
+        headers = [
+            "Period Start",
+            "Period End",
+            "Formatted Period",
+            "Total Cost",
+            "Currency",
+            "Estimated",
+        ]
 
         # Add group headers if available
         if cost_data.results and cost_data.results[0].groups:
@@ -454,9 +497,15 @@ class ExcelExporter(DataExporter):
         # Data rows
         row = 2
         for result in cost_data.results:
+            # Format the time period for this result
+            formatted_period = self.date_formatter.safe_format_time_period(
+                result.time_period
+            )
+
             base_data = [
                 result.time_period.start.date(),
                 result.time_period.end.date(),
+                formatted_period,
                 float(result.total.amount),
                 result.total.unit,
                 "Yes" if result.estimated else "No",
@@ -477,13 +526,17 @@ class ExcelExporter(DataExporter):
 
                     for col, value in enumerate(data, 1):
                         cell = ws.cell(row=row, column=col, value=value)
-                        if col == 3 or col == 7:  # Cost columns
+                        if (
+                            col == 4 or col == 8
+                        ):  # Cost columns (adjusted for new formatted period column)
                             cell.number_format = currency_format
                     row += 1
             else:
                 for col, value in enumerate(base_data, 1):
                     cell = ws.cell(row=row, column=col, value=value)
-                    if col == 3:  # Cost column
+                    if (
+                        col == 4
+                    ):  # Cost column (adjusted for new formatted period column)
                         cell.number_format = currency_format
                 row += 1
 
@@ -548,7 +601,11 @@ class ExcelExporter(DataExporter):
 class EmailReporter:
     """Email report functionality."""
 
-    def __init__(self, smtp_config: Dict[str, Any]):
+    def __init__(
+        self,
+        smtp_config: Dict[str, Any],
+        date_formatting_config: Optional[DateFormattingConfig] = None,
+    ):
         """
         Initialize email reporter.
 
@@ -561,6 +618,7 @@ class EmailReporter:
                 - use_tls: Whether to use TLS (default: True)
         """
         self.smtp_config = smtp_config
+        self.date_formatter = DateFormatter(date_formatting_config)
 
     def send_report(
         self,
@@ -599,7 +657,9 @@ class EmailReporter:
                 service_text = (
                     f" - {query_params.service}" if query_params.service else ""
                 )
-                period_text = f"{cost_data.time_period.start.date()} to {cost_data.time_period.end.date()}"
+                period_text = self.date_formatter.safe_format_time_period(
+                    cost_data.time_period
+                )
                 subject = f"AWS Cost Report{service_text} ({period_text})"
 
             msg["Subject"] = subject
@@ -644,7 +704,7 @@ class EmailReporter:
     ) -> str:
         """Create HTML email body."""
         service_text = f" for {query_params.service}" if query_params.service else ""
-        period_text = f"{cost_data.time_period.start.date()} to {cost_data.time_period.end.date()}"
+        period_text = self.date_formatter.safe_format_time_period(cost_data.time_period)
 
         html = f"""
         <html>
@@ -703,7 +763,7 @@ class EmailReporter:
             """
 
             for result in cost_data.results:
-                period = f"{result.time_period.start.date()} to {result.time_period.end.date()}"
+                period = self.date_formatter.safe_format_time_period(result.time_period)
                 cost = f"${result.total.amount:,.2f}"
                 status = "Estimated" if result.estimated else "Final"
 
@@ -863,16 +923,19 @@ class EmailReporter:
 class ExportManager:
     """Main export manager that coordinates different exporters."""
 
-    def __init__(self):
+    def __init__(self, date_formatting_config: Optional[DateFormattingConfig] = None):
         """Initialize export manager."""
+        self.date_formatting_config = date_formatting_config
         self.exporters = {
-            "csv": CSVExporter(),
-            "json": JSONExporter(),
+            "csv": CSVExporter(date_formatting_config=date_formatting_config),
+            "json": JSONExporter(date_formatting_config=date_formatting_config),
         }
 
         # Try to initialize Excel exporter
         try:
-            self.exporters["excel"] = ExcelExporter()
+            self.exporters["excel"] = ExcelExporter(
+                date_formatting_config=date_formatting_config
+            )
         except ImportError:
             pass  # Excel export not available
 
@@ -936,7 +999,9 @@ class ExportManager:
         Returns:
             bool: True if email sent successfully
         """
-        email_reporter = EmailReporter(smtp_config)
+        email_reporter = EmailReporter(
+            smtp_config, date_formatting_config=self.date_formatting_config
+        )
         return email_reporter.send_report(
             cost_data,
             query_params,

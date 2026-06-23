@@ -521,6 +521,132 @@ class TestCLI:
         assert "--profile" in result.output
         assert "--fresh" in result.output
         assert "--format" in result.output
+        assert "--llm-provider" in result.output
+
+    @patch("src.aws_cost_cli.cli.ConfigManager")
+    @patch("src.aws_cost_cli.cli.CredentialManager")
+    @patch("src.aws_cost_cli.cli.QueryPipeline")
+    def test_query_command_with_provider_override(
+        self, mock_pipeline, mock_credential_manager, mock_config_manager
+    ):
+        """Test query command with LLM provider override."""
+        # Mock configuration
+        mock_config_manager.return_value.load_config.return_value = self.config
+        mock_credential_manager.return_value.validate_credentials.return_value = True
+
+        # Mock pipeline
+        mock_pipeline_instance = Mock()
+        mock_pipeline_instance.process_query.return_value = Mock(
+            cost_data=self.cost_data,
+            formatted_response="Test response with Gemini override"
+        )
+        mock_pipeline.return_value = mock_pipeline_instance
+
+        # Run query with provider override
+        result = self.runner.invoke(cli, [
+            "query", 
+            "EC2 costs last month",
+            "--llm-provider", "gemini"
+        ])
+
+        assert result.exit_code == 0
+        assert "Test response with Gemini override" in result.output
+
+        # Verify pipeline was called with provider override
+        mock_pipeline_instance.process_query.assert_called_once()
+        call_args = mock_pipeline_instance.process_query.call_args[0][0]
+        assert call_args.llm_provider_override == "gemini"
+
+    @patch("src.aws_cost_cli.cli.ConfigManager")
+    @patch("src.aws_cost_cli.cli.CredentialManager")
+    def test_query_command_invalid_provider_override(
+        self, mock_credential_manager, mock_config_manager
+    ):
+        """Test query command with invalid provider override."""
+        # Mock configuration
+        mock_config_manager.return_value.load_config.return_value = self.config
+        mock_credential_manager.return_value.validate_credentials.return_value = True
+
+        # Run query with invalid provider
+        result = self.runner.invoke(cli, [
+            "query", 
+            "EC2 costs last month",
+            "--llm-provider", "invalid-provider"
+        ])
+
+        assert result.exit_code != 0
+        assert "Invalid value for '--llm-provider'" in result.output
+
+    @patch("src.aws_cost_cli.cli.ConfigManager")
+    @patch("src.aws_cost_cli.cli.CredentialManager")
+    @patch("src.aws_cost_cli.cli.QueryPipeline")
+    def test_query_command_provider_override_validation_error(
+        self, mock_pipeline, mock_credential_manager, mock_config_manager
+    ):
+        """Test query command when provider override is not configured."""
+        from src.aws_cost_cli.exceptions import ValidationError
+        
+        # Mock configuration
+        mock_config_manager.return_value.load_config.return_value = self.config
+        mock_credential_manager.return_value.validate_credentials.return_value = True
+
+        # Mock pipeline to raise validation error for unconfigured provider
+        mock_pipeline_instance = Mock()
+        mock_pipeline_instance.process_query.side_effect = ValidationError(
+            "Gemini provider is not configured. Please set GEMINI_API_KEY environment variable"
+        )
+        mock_pipeline.return_value = mock_pipeline_instance
+
+        # Run query with unconfigured provider
+        result = self.runner.invoke(cli, [
+            "query", 
+            "EC2 costs last month",
+            "--llm-provider", "gemini"
+        ])
+
+        assert result.exit_code != 0
+        assert "Gemini provider is not configured" in result.output
+        assert "GEMINI_API_KEY" in result.output
+
+    @patch("src.aws_cost_cli.cli.ConfigManager")
+    @patch("src.aws_cost_cli.cli.CredentialManager")
+    @patch("src.aws_cost_cli.cli.QueryPipeline")
+    def test_query_command_provider_override_preserves_config(
+        self, mock_pipeline, mock_credential_manager, mock_config_manager
+    ):
+        """Test that provider override doesn't modify the loaded configuration."""
+        # Mock configuration with OpenAI as default
+        config_with_openai = Config(
+            llm_provider="openai",
+            llm_config={"openai": {"api_key": "sk-test"}}
+        )
+        mock_config_manager.return_value.load_config.return_value = config_with_openai
+        mock_credential_manager.return_value.validate_credentials.return_value = True
+
+        # Mock pipeline
+        mock_pipeline_instance = Mock()
+        mock_pipeline_instance.process_query.return_value = Mock(
+            cost_data=self.cost_data,
+            formatted_response="Test response"
+        )
+        mock_pipeline.return_value = mock_pipeline_instance
+
+        # Run query with Gemini override
+        result = self.runner.invoke(cli, [
+            "query", 
+            "EC2 costs last month",
+            "--llm-provider", "gemini"
+        ])
+
+        assert result.exit_code == 0
+
+        # Verify the original config still has OpenAI as default
+        loaded_config = mock_config_manager.return_value.load_config.return_value
+        assert loaded_config.llm_provider == "openai"
+
+        # But the query context should have the override
+        call_args = mock_pipeline_instance.process_query.call_args[0][0]
+        assert call_args.llm_provider_override == "gemini"
 
 
 if __name__ == "__main__":

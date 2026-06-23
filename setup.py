@@ -35,6 +35,7 @@ setup(
         "pyyaml>=6.0",
         "openai>=1.0.0",
         "anthropic>=0.7.0",
+        "google-generativeai>=0.3.0",
         "requests>=2.28.0",
         "psutil>=5.9.0",
         "openpyxl>=3.0.0",

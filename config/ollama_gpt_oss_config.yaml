@@ -1,0 +1,47 @@
+# Configuration for GPT-OSS 20B model running on Ollama
+# Copy this to ~/.aws-cost-cli/config.yaml to use local GPT-OSS model
+
+llm_provider: ollama
+llm_config:
+  ollama:
+    model: "gpt-oss:20b"
+    base_url: "http://localhost:11434"
+    temperature: 0.1
+    max_tokens: 1000
+    timeout: 60  # Increased timeout for large model
+    # Optional: Custom generation parameters for gpt-oss:20b
+    options:
+      num_predict: 1000
+      top_k: 40
+      top_p: 0.9
+      repeat_penalty: 1.1
+
+# AWS Configuration
+default_profile: null  # Use default AWS profile
+aws_region: "us-east-1"
+
+# Cache Configuration (important for performance with local models)
+cache_ttl: 7200  # 2 hours - longer cache for local models
+cache_directory: "~/.aws-cost-cli/cache"
+
+# Output Configuration
+output_format: "simple"  # simple, detailed, json
+default_currency: "USD"
+date_format: "%Y-%m-%d"
+
+# Query Configuration
+default_granularity: "MONTHLY"
+max_results: 100
+
+# Performance settings for local LLM
+performance:
+  retry_attempts: 3
+  retry_delay: 2
+  connection_timeout: 30
+  read_timeout: 60
+
+# Notes:
+# - Ensure Ollama is running: ./start-ollama.sh
+# - Model must be pulled: ollama pull gpt-oss:20b
+# - Check status with: ./status-ollama.sh
+# - For best performance, ensure 16GB+ RAM available

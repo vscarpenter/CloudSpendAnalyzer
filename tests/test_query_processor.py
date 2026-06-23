@@ -13,6 +13,7 @@ from src.aws_cost_cli.query_processor import (
     AnthropicProvider,
     BedrockProvider,
     OllamaProvider,
+    GeminiProvider,
 )
 from src.aws_cost_cli.models import (
     QueryParameters,
@@ -492,6 +493,227 @@ class TestOllamaProvider:
 
         with pytest.raises(LLMProviderError, match="Ollama API error"):
             self.provider.parse_query("test query")
+
+
+class TestGeminiProvider:
+    """Test cases for GeminiProvider class."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.provider = GeminiProvider(api_key="test-key", model="gemini-1.5-flash")
+
+    def test_initialization_with_defaults(self):
+        """Test GeminiProvider initialization with default values."""
+        provider = GeminiProvider(api_key="test-key")
+        assert provider.api_key == "test-key"
+        assert provider.model == "gemini-1.5-flash"
+        assert provider._client is None
+
+    def test_initialization_with_custom_model(self):
+        """Test GeminiProvider initialization with custom model."""
+        provider = GeminiProvider(api_key="test-key", model="gemini-1.5-pro")
+        assert provider.api_key == "test-key"
+        assert provider.model == "gemini-1.5-pro"
+
+    def test_is_available_with_key(self):
+        """Test availability check with API key."""
+        with patch("google.generativeai.configure"), \
+             patch("google.generativeai.GenerativeModel"):
+            assert self.provider.is_available() is True
+
+    def test_is_available_without_key(self):
+        """Test availability check without API key."""
+        provider = GeminiProvider(api_key="")
+        with patch("google.generativeai.configure"), \
+             patch("google.generativeai.GenerativeModel"):
+            assert provider.is_available() is False
+
+    def test_is_available_import_error(self):
+        """Test availability check when google-generativeai package is not installed."""
+        with patch("google.generativeai.configure", side_effect=ImportError("No module named 'google.generativeai'")):
+            assert self.provider.is_available() is False
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_get_client_success(self, mock_model, mock_configure):
+        """Test successful client creation."""
+        mock_client = Mock()
+        mock_model.return_value = mock_client
+        
+        client = self.provider._get_client()
+        
+        mock_configure.assert_called_once_with(api_key="test-key")
+        mock_model.assert_called_once_with("gemini-1.5-flash")
+        assert client == mock_client
+        assert self.provider._client == mock_client
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_get_client_import_error(self, mock_model, mock_configure):
+        """Test client creation when package is not installed."""
+        mock_configure.side_effect = ImportError("No module named 'google.generativeai'")
+        
+        with pytest.raises(ImportError, match="google-generativeai package is required"):
+            self.provider._get_client()
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_success(self, mock_model, mock_configure):
+        """Test successful query parsing."""
+        # Mock Gemini response
+        mock_response = Mock()
+        mock_response.text = """
+        {
+            "service": "EC2",
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+            "granularity": "MONTHLY",
+            "metrics": ["BlendedCost"],
+            "group_by": ["SERVICE"]
+        }
+        """
+
+        mock_client = Mock()
+        mock_client.generate_content.return_value = mock_response
+        mock_model.return_value = mock_client
+
+        result = self.provider.parse_query("EC2 costs last month")
+
+        assert result["service"] == "EC2"
+        assert result["start_date"] == "2024-01-01"
+        assert result["granularity"] == "MONTHLY"
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_api_error(self, mock_model, mock_configure):
+        """Test handling of Gemini API errors."""
+        mock_client = Mock()
+        mock_client.generate_content.side_effect = Exception("API Error")
+        mock_model.return_value = mock_client
+
+        with pytest.raises(LLMProviderError, match="Gemini API error"):
+            self.provider.parse_query("test query")
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_authentication_error(self, mock_model, mock_configure):
+        """Test handling of authentication errors."""
+        mock_client = Mock()
+        mock_client.generate_content.side_effect = Exception("API key invalid")
+        mock_model.return_value = mock_client
+
+        with pytest.raises(LLMProviderError, match="Invalid Gemini API key"):
+            self.provider.parse_query("test query")
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_quota_error(self, mock_model, mock_configure):
+        """Test handling of quota exceeded errors."""
+        mock_client = Mock()
+        mock_client.generate_content.side_effect = Exception("quota exceeded")
+        mock_model.return_value = mock_client
+
+        with pytest.raises(LLMProviderError, match="Gemini API quota exceeded"):
+            self.provider.parse_query("test query")
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_network_error(self, mock_model, mock_configure):
+        """Test handling of network errors."""
+        from src.aws_cost_cli.exceptions import NetworkError
+        
+        mock_client = Mock()
+        mock_client.generate_content.side_effect = Exception("network error")
+        mock_model.return_value = mock_client
+
+        with pytest.raises(NetworkError, match="Network error connecting to Gemini"):
+            self.provider.parse_query("test query")
+
+    def test_parse_llm_response_valid_json(self):
+        """Test parsing valid JSON response."""
+        content = '{"service": "EC2", "granularity": "MONTHLY"}'
+        result = self.provider._parse_llm_response(content)
+
+        assert result["service"] == "EC2"
+        assert result["granularity"] == "MONTHLY"
+
+    def test_parse_llm_response_json_in_text(self):
+        """Test parsing JSON embedded in text."""
+        content = 'Here is the result: {"service": "S3", "granularity": "DAILY"} as requested.'
+        result = self.provider._parse_llm_response(content)
+
+        assert result["service"] == "S3"
+        assert result["granularity"] == "DAILY"
+
+    def test_parse_llm_response_invalid_json(self):
+        """Test handling of invalid JSON response."""
+        content = "This is not valid JSON"
+
+        with pytest.raises(
+            QueryParsingError, match="Could not parse LLM response as JSON"
+        ):
+            self.provider._parse_llm_response(content)
+
+    def test_parse_llm_response_empty_content(self):
+        """Test handling of empty response content."""
+        content = ""
+
+        with pytest.raises(
+            QueryParsingError, match="Could not parse LLM response as JSON"
+        ):
+            self.provider._parse_llm_response(content)
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_with_system_prompt(self, mock_model, mock_configure):
+        """Test that query parsing uses the correct system prompt."""
+        mock_response = Mock()
+        mock_response.text = '{"service": "Lambda", "granularity": "DAILY"}'
+
+        mock_client = Mock()
+        mock_client.generate_content.return_value = mock_response
+        mock_model.return_value = mock_client
+
+        self.provider.parse_query("Lambda costs daily")
+
+        # Verify that generate_content was called with the correct prompt structure
+        mock_client.generate_content.assert_called_once()
+        call_args = mock_client.generate_content.call_args[0][0]
+        
+        # The prompt should contain the system instructions and the user query
+        assert "You are an AWS cost analysis assistant" in call_args
+        assert "Lambda costs daily" in call_args
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_response_normalization(self, mock_model, mock_configure):
+        """Test that responses are properly normalized."""
+        # Test with response that has extra whitespace and formatting
+        mock_response = Mock()
+        mock_response.text = """
+        
+        Here's the analysis:
+        
+        {
+            "service": "RDS",
+            "start_date": "2024-02-01",
+            "end_date": "2024-02-29",
+            "granularity": "MONTHLY"
+        }
+        
+        Hope this helps!
+        """
+
+        mock_client = Mock()
+        mock_client.generate_content.return_value = mock_response
+        mock_model.return_value = mock_client
+
+        result = self.provider.parse_query("RDS costs in February")
+
+        assert result["service"] == "RDS"
+        assert result["start_date"] == "2024-02-01"
+        assert result["end_date"] == "2024-02-29"
+        assert result["granularity"] == "MONTHLY"
 
 
 class TestQueryParser:

@@ -42,6 +42,14 @@ class MetricType(Enum):
     USAGE_QUANTITY = "UsageQuantity"
 
 
+class DateFormatStyle(Enum):
+    """Date formatting style options."""
+
+    SMART = "smart"      # Automatically choose the most appropriate format
+    VERBOSE = "verbose"  # Always include full context (e.g., "January 1-31, 2025")
+    COMPACT = "compact"  # Use shortest reasonable format (e.g., "Jan 2025")
+
+
 @dataclass
 class TimePeriod:
     """Represents a time period for cost queries."""
@@ -140,16 +148,45 @@ class CostData:
 
 
 @dataclass
+class DateFormattingConfig:
+    """Date formatting configuration options."""
+
+    enabled: bool = True
+    format_style: DateFormatStyle = DateFormatStyle.SMART
+    fiscal_year_start_month: int = 1  # January by default
+    locale: str = "en_US"
+    fallback_to_iso: bool = True
+
+    def __post_init__(self):
+        # Validate fiscal year start month
+        if not 1 <= self.fiscal_year_start_month <= 12:
+            raise ValueError(f"fiscal_year_start_month must be between 1 and 12, got {self.fiscal_year_start_month}")
+        
+        # Convert string format_style to enum if needed
+        if isinstance(self.format_style, str):
+            try:
+                self.format_style = DateFormatStyle(self.format_style.lower())
+            except ValueError:
+                self.format_style = DateFormatStyle.SMART
+
+
+@dataclass
 class Config:
     """Application configuration."""
 
-    llm_provider: str = "openai"
+    llm_provider: str = "ollama"
     llm_config: Dict[str, Any] = None
     default_profile: Optional[str] = None
     cache_ttl: int = 3600  # 1 hour in seconds
     output_format: str = "simple"
     default_currency: str = "USD"
+    fallback_providers: List[str] = None
+    date_formatting: DateFormattingConfig = None
 
     def __post_init__(self):
         if self.llm_config is None:
             self.llm_config = {}
+        if self.fallback_providers is None:
+            self.fallback_providers = ["ollama", "openai", "anthropic", "gemini"]
+        if self.date_formatting is None:
+            self.date_formatting = DateFormattingConfig()

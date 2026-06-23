@@ -41,6 +41,8 @@ class QueryContext:
     enable_compression: bool = True
     max_chunk_days: int = 90
     show_performance_metrics: bool = False
+    # LLM provider override
+    llm_provider_override: Optional[str] = None
 
 
 @dataclass
@@ -103,14 +105,104 @@ class QueryPipeline:
         # Initialize cache manager
         self.cache_manager = CacheManager(default_ttl=self.config.cache_ttl)
 
-        # Initialize query parser
-        self.query_parser = QueryParser(self.config.llm_config)
+        # Initialize query parser with full config for fallback strategy
+        from dataclasses import asdict
+
+        config_dict = asdict(self.config)
+        self.query_parser = QueryParser(self.config.llm_config, config_dict)
 
         # AWS client will be initialized per query with profile
         self.aws_client = None
 
         # Response generator will be initialized per query with LLM provider
         self.response_generator = None
+
+    def _get_query_parser_for_context(self, context: QueryContext, result: QueryResult):
+        """Get query parser, potentially with provider override."""
+        from .provider_factory import ProviderFactory
+
+        if context.llm_provider_override:
+            # Validate the provider override
+            if not ProviderFactory.is_provider_supported(context.llm_provider_override):
+                valid_providers = ProviderFactory.get_all_provider_names()
+                raise ValidationError(
+                    f"Invalid LLM provider '{context.llm_provider_override}'. "
+                    f"Valid providers are: {', '.join(valid_providers)}"
+                )
+
+            # Check if the overridden provider is configured
+            provider_configured = self._is_provider_configured(
+                context.llm_provider_override, self.config.llm_config
+            )
+            if not provider_configured:
+                error_msg = self._get_provider_configuration_error(
+                    context.llm_provider_override
+                )
+                raise ValidationError(error_msg)
+
+            # Create temporary config with provider override
+            override_config = self.config.llm_config.copy()
+            override_config["provider"] = context.llm_provider_override
+
+            # Create temporary query parser with override
+            from .query_processor import QueryParser
+
+            return QueryParser(override_config)
+        else:
+            # Use default query parser
+            return self.query_parser
+
+    def _is_provider_configured(self, provider: str, config: Dict[str, Any]) -> bool:
+        """Check if a provider is properly configured."""
+        from .provider_factory import ProviderFactory
+
+        try:
+            provider_instance = ProviderFactory.create_provider(provider, config)
+            return provider_instance.is_available()
+        except Exception:
+            return False
+
+    def _get_provider_configuration_error(self, provider: str) -> str:
+        """Get helpful error message for unconfigured provider."""
+        from .provider_factory import ProviderFactory
+
+        # Get detailed status from ProviderFactory
+        status = ProviderFactory.get_provider_configuration_status(
+            self.config.llm_config
+        )
+        provider_status = status.get(provider, {})
+
+        if provider_status.get("error"):
+            return provider_status["error"]
+
+        # Fallback to generic messages
+        if provider == "openai":
+            return (
+                f"OpenAI provider is not configured. Please set OPENAI_API_KEY environment variable "
+                f"or run: aws-cost-cli configure --provider openai --api-key YOUR_API_KEY"
+            )
+        elif provider == "anthropic":
+            return (
+                f"Anthropic provider is not configured. Please set ANTHROPIC_API_KEY environment variable "
+                f"or run: aws-cost-cli configure --provider anthropic --api-key YOUR_API_KEY"
+            )
+        elif provider == "gemini":
+            return (
+                f"Gemini provider is not configured. Please set GEMINI_API_KEY environment variable "
+                f"or run: aws-cost-cli configure --provider gemini --api-key YOUR_API_KEY"
+            )
+        elif provider == "bedrock":
+            return (
+                f"Bedrock provider requires AWS credentials. Please configure AWS credentials "
+                f"or run: aws-cost-cli configure --provider bedrock"
+            )
+        elif provider == "ollama":
+            return (
+                f"Ollama provider requires local Ollama server. Please install and start Ollama "
+                f"or run: aws-cost-cli configure --provider ollama"
+            )
+        else:
+            return f"Provider '{provider}' is not configured."
 
     def process_query(self, context: QueryContext) -> QueryResult:
         """
@@ -213,40 +305,51 @@ class QueryPipeline:
     def _parse_query(
         self, context: QueryContext, result: QueryResult
     ) -> QueryParameters:
-        """Parse natural language query."""
+        """Parse natural language query using enhanced fallback strategy."""
         self.logger.debug(f"Parsing query: {context.original_query}")
 
+        # Use enhanced fallback strategy
         try:
-            query_params = self.query_parser.parse_query(context.original_query)
+            if context.llm_provider_override:
+                from .provider_factory import ProviderFactory
+
+                if not ProviderFactory.is_provider_supported(
+                    context.llm_provider_override
+                ):
+                    valid_providers = ProviderFactory.get_all_provider_names()
+                    raise ValidationError(
+                        f"Invalid LLM provider '{context.llm_provider_override}'. "
+                        f"Valid providers are: {', '.join(valid_providers)}"
+                    )
+
+                if not self._is_provider_configured(
+                    context.llm_provider_override, self.config.llm_config
+                ):
+                    raise ValidationError(
+                        self._get_provider_configuration_error(
+                            context.llm_provider_override
+                        )
+                    )
+
+            # Create query parser with full config for fallback strategy
+            from .query_processor import QueryParser
+            from dataclasses import asdict
+
+            # Pass full config to enable fallback strategy
+            config_dict = asdict(self.config)
+            query_parser = QueryParser(self.config.llm_config, config_dict)
+
+            # Use the enhanced fallback method with provider override
+            query_params = query_parser.parse_query_with_fallback(
+                context.original_query, preferred_provider=context.llm_provider_override
+            )
+
             result.llm_used = True
-            result.metadata["parsing_method"] = "llm"
+            result.metadata["parsing_method"] = "enhanced_fallback"
+            if context.llm_provider_override:
+                result.metadata["provider_override"] = context.llm_provider_override
+
             return query_params
-
-        except LLMProviderError as e:
-            self.logger.warning(f"LLM parsing failed, using fallback: {e.message}")
-
-            # Try fallback parser
-            try:
-                from .query_processor import FallbackParser
-
-                fallback = FallbackParser()
-                parsed_result = fallback.parse_query(context.original_query)
-                query_params = self.query_parser._convert_to_query_parameters(
-                    parsed_result
-                )
-
-                result.fallback_used = True
-                result.metadata["parsing_method"] = "fallback"
-                result.metadata["llm_error"] = e.message
-
-                return query_params
-
-            except Exception as fallback_error:
-                raise QueryParsingError(
-                    f"Both LLM and fallback parsing failed. LLM error: {e.message}, "
-                    f"Fallback error: {str(fallback_error)}",
-                    original_query=context.original_query,
-                )
 
         except (QueryParsingError, ValidationError) as e:
             raise e
@@ -414,7 +517,9 @@ class QueryPipeline:
                     self.logger.warning(f"Failed to initialize LLM provider: {e}")
 
             self.response_generator = ResponseGenerator(
-                llm_provider=llm_provider, output_format=context.output_format
+                llm_provider=llm_provider,
+                output_format=context.output_format,
+                date_formatting_config=self.config.date_formatting,
             )
 
         try:

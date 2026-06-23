@@ -21,11 +21,12 @@ class TestConfigManager:
         manager = ConfigManager()
         config = manager.load_config()
 
-        assert config.llm_provider == "openai"
+        assert config.llm_provider == "ollama"
         assert config.cache_ttl == 3600
         assert config.output_format == "simple"
         assert config.default_currency == "USD"
         assert config.default_profile is None
+        assert config.fallback_providers == ["ollama", "openai", "anthropic", "gemini"]
 
     def test_load_yaml_config_file(self):
         """Test loading configuration from YAML file."""
@@ -146,7 +147,7 @@ class TestConfigManager:
 
     def test_validate_config_valid(self):
         """Test validation of valid configuration."""
-        config = Config(llm_provider="openai", output_format="simple", cache_ttl=3600)
+        config = Config(llm_provider="ollama", output_format="simple", cache_ttl=3600)
 
         manager = ConfigManager()
         assert manager.validate_config(config) is True
@@ -174,6 +175,50 @@ class TestConfigManager:
         manager = ConfigManager()
         with pytest.raises(ConfigurationError, match="Cache TTL must be non-negative"):
             manager.validate_config(config)
+
+    def test_validate_config_gemini_missing_api_key(self):
+        """Test validation of Gemini provider without API key."""
+        config = Config(llm_provider="gemini", llm_config={})
+
+        manager = ConfigManager()
+        with pytest.raises(ConfigurationError, match="Gemini API key is required"):
+            manager.validate_config(config)
+
+    def test_validate_config_gemini_valid(self):
+        """Test validation of valid Gemini configuration."""
+        config = Config(
+            llm_provider="gemini",
+            llm_config={"gemini": {"api_key": "test-key", "model": "gemini-1.5-flash"}}
+        )
+
+        manager = ConfigManager()
+        assert manager.validate_config(config) is True
+
+    def test_validate_config_gemini_invalid_model(self):
+        """Test validation of invalid Gemini model."""
+        config = Config(
+            llm_provider="gemini",
+            llm_config={"gemini": {"api_key": "test-key", "model": "invalid-model"}}
+        )
+
+        manager = ConfigManager()
+        with pytest.raises(ConfigurationError, match="Invalid Gemini model"):
+            manager.validate_config(config)
+
+    @patch.dict(
+        os.environ,
+        {
+            "GEMINI_API_KEY": "test-gemini-key",
+            "GEMINI_MODEL": "gemini-1.5-pro",
+        },
+    )
+    def test_load_gemini_env_config(self):
+        """Test loading Gemini configuration from environment variables."""
+        manager = ConfigManager()
+        config = manager.load_config()
+
+        assert config.llm_config["gemini"]["api_key"] == "test-gemini-key"
+        assert config.llm_config["gemini"]["model"] == "gemini-1.5-pro"
 
     def test_auto_discover_config_file(self):
         """Test automatic discovery of configuration files."""
