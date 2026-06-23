@@ -35,7 +35,6 @@ from .exceptions import (
     is_retryable_error,
     get_retry_delay,
 )
-from .performance import PerformanceOptimizedClient
 
 
 class CredentialManager:
@@ -803,63 +802,6 @@ class AWSCostClient:
             cost_data.forecast_data = forecast_data.forecast_data
 
         return cost_data
-
-    def create_performance_optimized_client(
-        self,
-        enable_parallel: bool = True,
-        enable_compression: bool = True,
-        enable_monitoring: bool = True,
-    ) -> "PerformanceOptimizedClient":
-        """
-        Create a performance-optimized version of this client.
-
-        Args:
-            enable_parallel: Enable parallel query execution
-            enable_compression: Enable cache compression
-            enable_monitoring: Enable performance monitoring
-
-        Returns:
-            PerformanceOptimizedClient instance
-        """
-        return PerformanceOptimizedClient(
-            aws_client=self,
-            cache_manager=self.cache_manager,
-            enable_parallel=enable_parallel,
-            enable_compression=enable_compression,
-            enable_monitoring=enable_monitoring,
-        )
-
-    def get_cost_and_usage_with_performance_optimization(
-        self,
-        params: QueryParameters,
-        use_cache: bool = True,
-        enable_parallel: bool = True,
-        enable_compression: bool = True,
-        max_chunk_days: int = 90,
-    ) -> CostData:
-        """
-        Get cost data with automatic performance optimizations.
-
-        Args:
-            params: Query parameters
-            use_cache: Whether to use caching
-            enable_parallel: Enable parallel execution for large queries
-            enable_compression: Enable cache compression
-            max_chunk_days: Maximum days per parallel chunk
-
-        Returns:
-            CostData with performance optimizations applied
-        """
-        # Create temporary performance-optimized client
-        perf_client = self.create_performance_optimized_client(
-            enable_parallel=enable_parallel,
-            enable_compression=enable_compression,
-            enable_monitoring=True,
-        )
-
-        return perf_client.get_cost_and_usage_optimized(
-            params=params, use_cache=use_cache, max_chunk_days=max_chunk_days
-        )
 
     def _get_historical_periods(
         self, end_date: datetime, months: int

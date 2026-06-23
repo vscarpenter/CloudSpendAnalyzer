@@ -73,27 +73,6 @@ def cli(ctx):
     type=click.Path(exists=True),
     help="Path to configuration file",
 )
-@click.option(
-    "--parallel/--no-parallel",
-    default=True,
-    help="Enable/disable parallel query execution for large queries",
-)
-@click.option(
-    "--compression/--no-compression",
-    default=True,
-    help="Enable/disable cache compression",
-)
-@click.option(
-    "--max-chunk-days",
-    type=int,
-    default=90,
-    help="Maximum days per parallel chunk (default: 90)",
-)
-@click.option(
-    "--performance-metrics",
-    is_flag=True,
-    help="Show performance metrics after query execution",
-)
 @click.pass_context
 def query(
     ctx,
@@ -103,10 +82,6 @@ def query(
     output_format: Optional[str],
     llm_provider: Optional[str],
     config_file: Optional[str],
-    parallel: bool,
-    compression: bool,
-    max_chunk_days: int,
-    performance_metrics: bool,
 ):
     """Query AWS costs using natural language.
 
@@ -124,10 +99,6 @@ def query(
             fresh_data=fresh,
             output_format=output_format.lower() if output_format else None,
             debug=ctx.obj.get("debug", False),
-            enable_parallel=parallel,
-            enable_compression=compression,
-            max_chunk_days=max_chunk_days,
-            show_performance_metrics=performance_metrics,
             llm_provider_override=llm_provider.lower() if llm_provider else None,
         )
 
@@ -226,43 +197,6 @@ def query(
                         console.print("🤖 Query parsing: LLM")
                     elif result.fallback_used:
                         console.print("🔧 Query parsing: Fallback")
-
-                # Show performance metrics if requested
-                if context.show_performance_metrics:
-                    console.print("\n🚀 Performance Metrics:")
-                    console.print(
-                        f"   Processing time: {result.processing_time_ms:.1f}ms"
-                    )
-                    console.print(f"   API calls made: {result.api_calls_made}")
-                    console.print(f"   Parallel requests: {result.parallel_requests}")
-                    console.print(
-                        f"   Cache hit: {'Yes' if result.cache_hit else 'No'}"
-                    )
-
-                    if result.compression_stats:
-                        stats = result.compression_stats
-                        console.print(
-                            f"   Compression ratio: {stats.get('average_compression_ratio', 0):.2f}"
-                        )
-                        console.print(
-                            f"   Space saved: {stats.get('space_saved_percent', 0):.1f}%"
-                        )
-
-                    if result.performance_metrics:
-                        perf = result.performance_metrics
-                        if "query_performance" in perf:
-                            qp = perf["query_performance"]
-                            if "cache_hit_rate" in qp:
-                                console.print(
-                                    f"   Cache hit rate: {qp['cache_hit_rate']:.1%}"
-                                )
-                            if (
-                                "performance" in qp
-                                and "avg_duration_ms" in qp["performance"]
-                            ):
-                                console.print(
-                                    f"   Avg query time: {qp['performance']['avg_duration_ms']:.1f}ms"
-                                )
         else:
             # Handle error
             error = result.error
@@ -1202,101 +1136,6 @@ def cleanup_cache():
         console.print(
             Panel(
                 Text(f"❌ Failed to cleanup cache: {str(e)}", style="bold red"),
-                title="Error",
-                border_style="red",
-            )
-        )
-        sys.exit(1)
-
-
-@cli.command()
-@click.option(
-    "--hours",
-    type=int,
-    default=24,
-    help="Hours to look back for performance metrics (default: 24)",
-)
-@click.option(
-    "--format",
-    "output_format",
-    type=click.Choice(["simple", "json"], case_sensitive=False),
-    default="simple",
-    help="Output format",
-)
-def performance(hours: int, output_format: str):
-    """Show performance metrics and cache statistics."""
-    try:
-        from .performance import PerformanceMonitor, CompressedCacheManager
-
-        # Initialize components
-        cache_manager = CacheManager()
-        monitor = PerformanceMonitor()
-        compressed_cache = CompressedCacheManager(cache_manager)
-
-        # Get performance summary
-        perf_summary = monitor.get_performance_summary(hours)
-        compression_stats = compressed_cache.get_compression_stats()
-        cache_stats = cache_manager.get_cache_stats()
-
-        if output_format == "json":
-            output = {
-                "performance_summary": perf_summary,
-                "compression_stats": compression_stats,
-                "cache_stats": cache_stats,
-            }
-            click.echo(json.dumps(output, indent=2))
-        else:
-            console.print(f"\n📊 Performance Summary (Last {hours} hours)")
-
-            if "total_queries" in perf_summary:
-                console.print(f"   Total queries: {perf_summary['total_queries']}")
-                console.print(
-                    f"   Cache hit rate: {perf_summary.get('cache_hit_rate', 0):.1%}"
-                )
-                console.print(f"   Error rate: {perf_summary.get('error_rate', 0):.1%}")
-                console.print(
-                    f"   Total API calls: {perf_summary.get('total_api_calls', 0)}"
-                )
-
-                if "performance" in perf_summary:
-                    perf = perf_summary["performance"]
-                    console.print(
-                        f"   Avg response time: {perf.get('avg_duration_ms', 0):.1f}ms"
-                    )
-                    console.print(
-                        f"   95th percentile: {perf.get('p95_duration_ms', 0):.1f}ms"
-                    )
-            else:
-                console.print("   No performance data available")
-
-            console.print("\n💾 Cache Statistics")
-            console.print(f"   Total entries: {cache_stats.get('total_entries', 0)}")
-            console.print(f"   Valid entries: {cache_stats.get('valid_entries', 0)}")
-            console.print(
-                f"   Expired entries: {cache_stats.get('expired_entries', 0)}"
-            )
-            console.print(
-                f"   Cache size: {cache_stats.get('cache_size_bytes', 0) / 1024 / 1024:.1f} MB"
-            )
-
-            console.print("\n🗜️  Compression Statistics")
-            console.print(
-                f"   Compressed files: {compression_stats.get('compressed_files', 0)}"
-            )
-            console.print(
-                f"   Avg compression ratio: {compression_stats.get('average_compression_ratio', 0):.2f}"
-            )
-            console.print(
-                f"   Space saved: {compression_stats.get('space_saved_percent', 0):.1f}%"
-            )
-            console.print(
-                f"   Total space saved: {compression_stats.get('total_space_saved', 0) / 1024 / 1024:.1f} MB"
-            )
-
-    except Exception as e:
-        console.print(
-            Panel(
-                Text(f"Failed to get performance metrics: {str(e)}", style="bold red"),
                 title="Error",
                 border_style="red",
             )

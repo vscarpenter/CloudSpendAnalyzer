@@ -360,8 +360,6 @@ llm_config:
                 [
                     "query",
                     query,
-                    "--no-parallel",
-                    "--no-compression",
                     "--config-file",
                     self.config_file,
                 ],
@@ -375,8 +373,6 @@ llm_config:
                     query,
                     "--llm-provider",
                     "gemini",
-                    "--no-parallel",
-                    "--no-compression",
                     "--config-file",
                     self.config_file,
                 ],
