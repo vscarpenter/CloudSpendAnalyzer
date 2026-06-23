@@ -427,6 +427,158 @@ class LLMProvider(ABC):
         """Perform a health check on this provider."""
         return self._performance_monitor.check_provider_health(self, self.timeout)
 
+    def _get_system_prompt(self) -> str:
+        """Get the system prompt for query parsing (shared by all providers)."""
+        return self._build_system_prompt()
+
+    def _build_system_prompt(self) -> str:
+        """Build the canonical system prompt used across all LLM providers.
+
+        The current date is injected at call time so the prompt always reflects
+        "today" rather than a hardcoded reference date. The example dates below
+        are illustrative of the expected output format only.
+        """
+        today = datetime.now(timezone.utc).strftime("%B %d, %Y")
+        return f"""You are an AWS cost analysis assistant. Parse natural language queries about AWS costs and return structured JSON parameters.
+
+IMPORTANT: Today's date is {today}. Use this as the reference for relative dates.
+
+Extract these parameters from the user query:
+- service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
+- start_date: Start date in YYYY-MM-DD format or null
+- end_date: End date in YYYY-MM-DD format or null
+- granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
+- metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
+- group_by: Array of grouping dimensions like ["SERVICE"] or null
+- date_range_type: QUARTER, FISCAL_YEAR, CALENDAR_YEAR, or CUSTOM (null if not specified)
+- fiscal_year_start_month: Month when fiscal year starts (1-12, default: 1)
+- trend_analysis: PERIOD_OVER_PERIOD, YEAR_OVER_YEAR, MONTH_OVER_MONTH, QUARTER_OVER_QUARTER (null if not requested)
+- include_forecast: true if user asks for forecast/prediction, false otherwise
+- forecast_months: Number of months to forecast (default: 3)
+- cost_allocation_tags: Array of tag keys for cost allocation (null if not specified)
+
+AWS Service Name Mapping (use the exact names on the right):
+- S3 → "Amazon Simple Storage Service"
+- EC2 → "Amazon Elastic Compute Cloud - Compute"
+- RDS → "Amazon Relational Database Service"
+- Lambda → "AWS Lambda"
+- CloudFront → "Amazon CloudFront"
+- VPC → "Amazon Virtual Private Cloud"
+- Route 53 → "Amazon Route 53"
+- KMS → "AWS Key Management Service"
+- Secrets Manager → "AWS Secrets Manager"
+
+For relative dates (these examples assume a reference date of August 24, 2025):
+- "last month" = July 2025 (2025-07-01 to 2025-08-01)
+- "this month" = August 2025 (2025-08-01 to 2025-08-24)
+- "this year" = 2025 (2025-01-01 to 2025-08-24)
+- "last year" = 2024 (2024-01-01 to 2025-01-01)
+
+For specific years (IMPORTANT - use full year ranges):
+- "2025" or "all of 2025" or "for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
+- "2024" or "all of 2024" or "for 2024" = Full year 2024 (2024-01-01 to 2025-01-01)
+- "S3 costs for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
+
+For quarters:
+- "Q1 2025" = 2025-01-01 to 2025-04-01
+- "Q2 2025" = 2025-04-01 to 2025-07-01
+- "Q3 2025" = 2025-07-01 to 2025-10-01
+- "Q4 2025" = 2025-10-01 to 2026-01-01
+- "this quarter" = Q3 2025 (2025-07-01 to 2025-10-01)
+- "last quarter" = Q2 2025 (2025-04-01 to 2025-07-01)
+
+For fiscal years (assuming January start unless specified):
+- "FY2025" = 2025-01-01 to 2026-01-01
+- "fiscal year 2025" = 2025-01-01 to 2026-01-01
+
+For specific months like "july 2025" or "in july 2025":
+- Use the full month range: 2025-07-01 to 2025-08-01 (end date is first day of next month)
+
+For date ranges like "from X to Y", use the full range including both dates.
+
+For trend analysis queries:
+- "compared to last month" → trend_analysis: "MONTH_OVER_MONTH"
+- "vs last year" → trend_analysis: "YEAR_OVER_YEAR"
+- "compared to last quarter" → trend_analysis: "QUARTER_OVER_QUARTER"
+- "trend analysis" → trend_analysis: "PERIOD_OVER_PERIOD"
+
+For forecast queries:
+- "forecast", "predict", "projection" → include_forecast: true
+- "next 6 months" → forecast_months: 6
+
+IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
+- "What services did I use?"
+- "List the services that cost money"
+- "Show me service breakdown"
+- "Which services did I spend money on?"
+
+Return only valid JSON in this format:
+{{
+  "service": null,
+  "start_date": "2025-07-01",
+  "end_date": "2025-08-01",
+  "granularity": "MONTHLY",
+  "metrics": ["BlendedCost"],
+  "group_by": ["SERVICE"],
+  "date_range_type": "QUARTER",
+  "fiscal_year_start_month": 1,
+  "trend_analysis": "MONTH_OVER_MONTH",
+  "include_forecast": false,
+  "forecast_months": 3,
+  "cost_allocation_tags": null
+}}"""
+
+    def _parse_llm_response(self, content: str) -> Dict[str, Any]:
+        """Parse an LLM response string and extract the JSON object.
+
+        Handles bare JSON, JSON wrapped in ```json ... ``` (or plain ```) code
+        fences, and JSON embedded in surrounding prose. Raises QueryParsingError
+        if no valid JSON object can be extracted.
+        """
+        cleaned = content.strip()
+
+        # Strip markdown code fences (```json ... ``` or ``` ... ```).
+        if cleaned.startswith("```"):
+            fence_match = re.search(
+                r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL | re.IGNORECASE
+            )
+            if fence_match:
+                cleaned = fence_match.group(1).strip()
+
+        # First attempt: parse the cleaned content directly.
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: extract the first balanced {...} object from the content.
+        json_str = self._extract_json_object(cleaned)
+        if json_str is not None:
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+
+        raise QueryParsingError(f"Could not parse LLM response as JSON: {content}")
+
+    @staticmethod
+    def _extract_json_object(content: str) -> Optional[str]:
+        """Return the first balanced top-level {...} JSON object found in content."""
+        start = content.find("{")
+        if start == -1:
+            return None
+
+        depth = 0
+        for index in range(start, len(content)):
+            char = content[index]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[start : index + 1]
+        return None
+
 
 class OpenAIProvider(LLMProvider):
     """OpenAI GPT provider for query parsing."""
@@ -458,9 +610,12 @@ class OpenAIProvider(LLMProvider):
 
     def is_available(self) -> bool:
         """Check if OpenAI is available and configured."""
+        # An empty key cannot construct a client (the SDK raises), so short-circuit.
+        if not self.api_key:
+            return False
         try:
-            _client = self._get_client()
-            return bool(self.api_key)
+            self._get_client()
+            return True
         except ImportError:
             return False
 
@@ -499,106 +654,6 @@ class OpenAIProvider(LLMProvider):
                 raise NetworkError(f"Network error connecting to OpenAI: {e}")
             else:
                 raise LLMProviderError(f"OpenAI API error: {str(e)}", provider="openai")
-
-    def _get_system_prompt(self) -> str:
-        """Get the system prompt for query parsing."""
-        return """You are an AWS cost analysis assistant. Parse natural language queries about AWS costs and return structured JSON parameters.
-
-IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relative dates.
-
-Extract these parameters from the user query:
-- service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
-- start_date: Start date in YYYY-MM-DD format or null
-- end_date: End date in YYYY-MM-DD format or null
-- granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
-- metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
-- group_by: Array of grouping dimensions like ["SERVICE"] or null
-- date_range_type: QUARTER, FISCAL_YEAR, CALENDAR_YEAR, or CUSTOM (null if not specified)
-- fiscal_year_start_month: Month when fiscal year starts (1-12, default: 1)
-- trend_analysis: PERIOD_OVER_PERIOD, YEAR_OVER_YEAR, MONTH_OVER_MONTH, QUARTER_OVER_QUARTER (null if not requested)
-- include_forecast: true if user asks for forecast/prediction, false otherwise
-- forecast_months: Number of months to forecast (default: 3)
-- cost_allocation_tags: Array of tag keys for cost allocation (null if not specified)
-
-AWS Service Name Mapping (use the exact names on the right):
-- S3 → "Amazon Simple Storage Service"
-- EC2 → "Amazon Elastic Compute Cloud - Compute"
-- RDS → "Amazon Relational Database Service"
-- Lambda → "AWS Lambda"
-- CloudFront → "Amazon CloudFront"
-- VPC → "Amazon Virtual Private Cloud"
-- Route 53 → "Amazon Route 53"
-- KMS → "AWS Key Management Service"
-- Secrets Manager → "AWS Secrets Manager"
-
-For relative dates:
-- "last month" = July 2025 (2025-07-01 to 2025-08-01)
-- "this month" = August 2025 (2025-08-01 to 2025-08-24)
-- "this year" = 2025 (2025-01-01 to 2025-08-24)
-- "last year" = 2024 (2024-01-01 to 2025-01-01)
-
-For specific years (IMPORTANT - use full year ranges):
-- "2025" or "all of 2025" or "for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
-- "2024" or "all of 2024" or "for 2024" = Full year 2024 (2024-01-01 to 2025-01-01)
-- "S3 costs for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
-
-For quarters:
-- "Q1 2025" = 2025-01-01 to 2025-04-01
-- "Q2 2025" = 2025-04-01 to 2025-07-01
-- "Q3 2025" = 2025-07-01 to 2025-10-01
-- "Q4 2025" = 2025-10-01 to 2026-01-01
-- "this quarter" = Q3 2025 (2025-07-01 to 2025-10-01)
-- "last quarter" = Q2 2025 (2025-04-01 to 2025-07-01)
-
-For fiscal years (assuming January start unless specified):
-- "FY2025" = 2025-01-01 to 2026-01-01
-- "fiscal year 2025" = 2025-01-01 to 2026-01-01
-
-For trend analysis queries:
-- "compared to last month" → trend_analysis: "MONTH_OVER_MONTH"
-- "vs last year" → trend_analysis: "YEAR_OVER_YEAR"
-- "compared to last quarter" → trend_analysis: "QUARTER_OVER_QUARTER"
-- "trend analysis" → trend_analysis: "PERIOD_OVER_PERIOD"
-
-For forecast queries:
-- "forecast", "predict", "projection" → include_forecast: true
-- "next 6 months" → forecast_months: 6
-
-IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
-- "What services did I use?"
-- "List the services that cost money"
-- "Show me service breakdown"
-- "Which services did I spend money on?"
-
-Return only valid JSON in this format:
-{
-  "service": null,
-  "start_date": "2025-07-01",
-  "end_date": "2025-08-01",
-  "granularity": "MONTHLY",
-  "metrics": ["BlendedCost"],
-  "group_by": ["SERVICE"],
-  "date_range_type": "QUARTER",
-  "fiscal_year_start_month": 1,
-  "trend_analysis": "MONTH_OVER_MONTH",
-  "include_forecast": false,
-  "forecast_months": 3,
-  "cost_allocation_tags": null
-}"""
-
-    def _parse_llm_response(self, content: str) -> Dict[str, Any]:
-        """Parse LLM response and extract JSON."""
-        try:
-            # Try to find JSON in the response
-            json_match = re.search(r"\{.*\}", content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                return json.loads(json_str)
-            else:
-                # If no JSON found, try parsing the entire content
-                return json.loads(content)
-        except json.JSONDecodeError:
-            raise QueryParsingError(f"Could not parse LLM response as JSON: {content}")
 
 
 class AnthropicProvider(LLMProvider):
@@ -678,107 +733,6 @@ class AnthropicProvider(LLMProvider):
                 raise LLMProviderError(
                     f"Anthropic API error: {str(e)}", provider="anthropic"
                 )
-
-    def _get_system_prompt(self) -> str:
-        """Get the system prompt for query parsing."""
-        return """You are an AWS cost analysis assistant. Parse natural language queries about AWS costs and return structured JSON parameters.
-
-IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relative dates.
-
-Extract these parameters from the user query:
-- service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
-- start_date: Start date in YYYY-MM-DD format or null
-- end_date: End date in YYYY-MM-DD format or null
-- granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
-- metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
-- group_by: Array of grouping dimensions like ["SERVICE"] or null
-
-AWS Service Name Mapping (use the exact names on the right):
-- S3 → "Amazon Simple Storage Service"
-- EC2 → "Amazon Elastic Compute Cloud - Compute"
-- RDS → "Amazon Relational Database Service"
-- Lambda → "AWS Lambda"
-- CloudFront → "Amazon CloudFront"
-- VPC → "Amazon Virtual Private Cloud"
-- Route 53 → "Amazon Route 53"
-- KMS → "AWS Key Management Service"
-- Secrets Manager → "AWS Secrets Manager"
-
-For relative dates:
-- "last month" = July 2025 (2025-07-01 to 2025-08-01)
-- "this month" = August 2025 (2025-08-01 to 2025-08-24)
-- "this year" = 2025 (2025-01-01 to 2025-08-24)
-- "last year" = 2024 (2024-01-01 to 2025-01-01)
-
-For specific years (IMPORTANT - use full year ranges):
-- "2025" or "all of 2025" or "for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
-- "2024" or "all of 2024" or "for 2024" = Full year 2024 (2024-01-01 to 2025-01-01)
-- "S3 costs for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
-
-For quarters:
-- "Q1 2025" = 2025-01-01 to 2025-04-01
-- "Q2 2025" = 2025-04-01 to 2025-07-01
-- "Q3 2025" = 2025-07-01 to 2025-10-01
-- "Q4 2025" = 2025-10-01 to 2026-01-01
-- "this quarter" = Q3 2025 (2025-07-01 to 2025-10-01)
-- "last quarter" = Q2 2025 (2025-04-01 to 2025-07-01)
-
-For fiscal years (assuming January start unless specified):
-- "FY2025" = 2025-01-01 to 2026-01-01
-- "fiscal year 2025" = 2025-01-01 to 2026-01-01
-
-For specific months like "july 2025" or "in july 2025":
-- Use the full month range: 2025-07-01 to 2025-08-01 (end date is first day of next month)
-
-For date ranges like "from X to Y", use the full range including both dates.
-
-For trend analysis queries:
-- "compared to last month" → trend_analysis: "MONTH_OVER_MONTH"
-- "vs last year" → trend_analysis: "YEAR_OVER_YEAR"
-- "compared to last quarter" → trend_analysis: "QUARTER_OVER_QUARTER"
-- "trend analysis" → trend_analysis: "PERIOD_OVER_PERIOD"
-
-For forecast queries:
-- "forecast", "predict", "projection" → include_forecast: true
-- "next 6 months" → forecast_months: 6
-
-IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
-- "What services did I use?"
-- "List the services that cost money"
-- "Show me service breakdown"
-- "Which services did I spend money on?"
-
-For queries asking about service breakdown, set group_by to ["SERVICE"].
-
-Return only valid JSON in this format:
-{
-  "service": null,
-  "start_date": "2025-07-01",
-  "end_date": "2025-08-01",
-  "granularity": "MONTHLY",
-  "metrics": ["BlendedCost"],
-  "group_by": ["SERVICE"],
-  "date_range_type": "QUARTER",
-  "fiscal_year_start_month": 1,
-  "trend_analysis": "MONTH_OVER_MONTH",
-  "include_forecast": false,
-  "forecast_months": 3,
-  "cost_allocation_tags": null
-}"""
-
-    def _parse_llm_response(self, content: str) -> Dict[str, Any]:
-        """Parse LLM response and extract JSON."""
-        try:
-            # Try to find JSON in the response
-            json_match = re.search(r"\{.*\}", content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                return json.loads(json_str)
-            else:
-                # If no JSON found, try parsing the entire content
-                return json.loads(content)
-        except json.JSONDecodeError:
-            raise ValueError(f"Could not parse LLM response as JSON: {content}")
 
 
 class BedrockProvider(LLMProvider):
@@ -941,107 +895,6 @@ class BedrockProvider(LLMProvider):
                     f"Bedrock API error: {str(e)}", provider="bedrock"
                 )
 
-    def _get_system_prompt(self) -> str:
-        """Get the system prompt for query parsing."""
-        return """You are an AWS cost analysis assistant. Parse natural language queries about AWS costs and return structured JSON parameters.
-
-IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relative dates.
-
-Extract these parameters from the user query:
-- service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
-- start_date: Start date in YYYY-MM-DD format or null
-- end_date: End date in YYYY-MM-DD format or null
-- granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
-- metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
-- group_by: Array of grouping dimensions like ["SERVICE"] or null
-
-AWS Service Name Mapping (use the exact names on the right):
-- S3 → "Amazon Simple Storage Service"
-- EC2 → "Amazon Elastic Compute Cloud - Compute"
-- RDS → "Amazon Relational Database Service"
-- Lambda → "AWS Lambda"
-- CloudFront → "Amazon CloudFront"
-- VPC → "Amazon Virtual Private Cloud"
-- Route 53 → "Amazon Route 53"
-- KMS → "AWS Key Management Service"
-- Secrets Manager → "AWS Secrets Manager"
-
-For relative dates:
-- "last month" = July 2025 (2025-07-01 to 2025-08-01)
-- "this month" = August 2025 (2025-08-01 to 2025-08-24)
-- "this year" = 2025 (2025-01-01 to 2025-08-24)
-- "last year" = 2024 (2024-01-01 to 2025-01-01)
-
-For specific years (IMPORTANT - use full year ranges):
-- "2025" or "all of 2025" or "for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
-- "2024" or "all of 2024" or "for 2024" = Full year 2024 (2024-01-01 to 2025-01-01)
-- "S3 costs for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
-
-For quarters:
-- "Q1 2025" = 2025-01-01 to 2025-04-01
-- "Q2 2025" = 2025-04-01 to 2025-07-01
-- "Q3 2025" = 2025-07-01 to 2025-10-01
-- "Q4 2025" = 2025-10-01 to 2026-01-01
-- "this quarter" = Q3 2025 (2025-07-01 to 2025-10-01)
-- "last quarter" = Q2 2025 (2025-04-01 to 2025-07-01)
-
-For fiscal years (assuming January start unless specified):
-- "FY2025" = 2025-01-01 to 2026-01-01
-- "fiscal year 2025" = 2025-01-01 to 2026-01-01
-
-For specific months like "july 2025" or "in july 2025":
-- Use the full month range: 2025-07-01 to 2025-08-01 (end date is first day of next month)
-
-For date ranges like "from X to Y", use the full range including both dates.
-
-For trend analysis queries:
-- "compared to last month" → trend_analysis: "MONTH_OVER_MONTH"
-- "vs last year" → trend_analysis: "YEAR_OVER_YEAR"
-- "compared to last quarter" → trend_analysis: "QUARTER_OVER_QUARTER"
-- "trend analysis" → trend_analysis: "PERIOD_OVER_PERIOD"
-
-For forecast queries:
-- "forecast", "predict", "projection" → include_forecast: true
-- "next 6 months" → forecast_months: 6
-
-IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
-- "What services did I use?"
-- "List the services that cost money"
-- "Show me service breakdown"
-- "Which services did I spend money on?"
-
-For queries asking about service breakdown, set group_by to ["SERVICE"].
-
-Return only valid JSON in this format:
-{
-  "service": null,
-  "start_date": "2025-07-01",
-  "end_date": "2025-08-01",
-  "granularity": "MONTHLY",
-  "metrics": ["BlendedCost"],
-  "group_by": ["SERVICE"],
-  "date_range_type": "QUARTER",
-  "fiscal_year_start_month": 1,
-  "trend_analysis": "MONTH_OVER_MONTH",
-  "include_forecast": false,
-  "forecast_months": 3,
-  "cost_allocation_tags": null
-}"""
-
-    def _parse_llm_response(self, content: str) -> Dict[str, Any]:
-        """Parse LLM response and extract JSON."""
-        try:
-            # Try to find JSON in the response
-            json_match = re.search(r"\{.*\}", content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                return json.loads(json_str)
-            else:
-                # If no JSON found, try parsing the entire content
-                return json.loads(content)
-        except json.JSONDecodeError:
-            raise QueryParsingError(f"Could not parse LLM response as JSON: {content}")
-
 
 class OllamaProvider(LLMProvider):
     """Ollama local LLM provider for query parsing."""
@@ -1131,107 +984,6 @@ class OllamaProvider(LLMProvider):
         except Exception as e:
             raise LLMProviderError(f"Ollama API error: {str(e)}", provider="ollama")
 
-    def _get_system_prompt(self) -> str:
-        """Get the system prompt for query parsing."""
-        return """You are an AWS cost analysis assistant. Parse natural language queries about AWS costs and return structured JSON parameters.
-
-IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relative dates.
-
-Extract these parameters from the user query:
-- service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
-- start_date: Start date in YYYY-MM-DD format or null
-- end_date: End date in YYYY-MM-DD format or null
-- granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
-- metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
-- group_by: Array of grouping dimensions like ["SERVICE"] or null
-
-AWS Service Name Mapping (use the exact names on the right):
-- S3 → "Amazon Simple Storage Service"
-- EC2 → "Amazon Elastic Compute Cloud - Compute"
-- RDS → "Amazon Relational Database Service"
-- Lambda → "AWS Lambda"
-- CloudFront → "Amazon CloudFront"
-- VPC → "Amazon Virtual Private Cloud"
-- Route 53 → "Amazon Route 53"
-- KMS → "AWS Key Management Service"
-- Secrets Manager → "AWS Secrets Manager"
-
-For relative dates:
-- "last month" = July 2025 (2025-07-01 to 2025-08-01)
-- "this month" = August 2025 (2025-08-01 to 2025-08-24)
-- "this year" = 2025 (2025-01-01 to 2025-08-24)
-- "last year" = 2024 (2024-01-01 to 2025-01-01)
-
-For specific years (IMPORTANT - use full year ranges):
-- "2025" or "all of 2025" or "for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
-- "2024" or "all of 2024" or "for 2024" = Full year 2024 (2024-01-01 to 2025-01-01)
-- "S3 costs for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
-
-For quarters:
-- "Q1 2025" = 2025-01-01 to 2025-04-01
-- "Q2 2025" = 2025-04-01 to 2025-07-01
-- "Q3 2025" = 2025-07-01 to 2025-10-01
-- "Q4 2025" = 2025-10-01 to 2026-01-01
-- "this quarter" = Q3 2025 (2025-07-01 to 2025-10-01)
-- "last quarter" = Q2 2025 (2025-04-01 to 2025-07-01)
-
-For fiscal years (assuming January start unless specified):
-- "FY2025" = 2025-01-01 to 2026-01-01
-- "fiscal year 2025" = 2025-01-01 to 2026-01-01
-
-For specific months like "july 2025" or "in july 2025":
-- Use the full month range: 2025-07-01 to 2025-08-01 (end date is first day of next month)
-
-For date ranges like "from X to Y", use the full range including both dates.
-
-For trend analysis queries:
-- "compared to last month" → trend_analysis: "MONTH_OVER_MONTH"
-- "vs last year" → trend_analysis: "YEAR_OVER_YEAR"
-- "compared to last quarter" → trend_analysis: "QUARTER_OVER_QUARTER"
-- "trend analysis" → trend_analysis: "PERIOD_OVER_PERIOD"
-
-For forecast queries:
-- "forecast", "predict", "projection" → include_forecast: true
-- "next 6 months" → forecast_months: 6
-
-IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
-- "What services did I use?"
-- "List the services that cost money"
-- "Show me service breakdown"
-- "Which services did I spend money on?"
-
-For queries asking about service breakdown, set group_by to ["SERVICE"].
-
-Return only valid JSON in this format:
-{
-  "service": null,
-  "start_date": "2025-07-01",
-  "end_date": "2025-08-01",
-  "granularity": "MONTHLY",
-  "metrics": ["BlendedCost"],
-  "group_by": ["SERVICE"],
-  "date_range_type": "QUARTER",
-  "fiscal_year_start_month": 1,
-  "trend_analysis": "MONTH_OVER_MONTH",
-  "include_forecast": false,
-  "forecast_months": 3,
-  "cost_allocation_tags": null
-}"""
-
-    def _parse_llm_response(self, content: str) -> Dict[str, Any]:
-        """Parse LLM response and extract JSON."""
-        try:
-            # Try to find JSON in the response
-            json_match = re.search(r"\{.*\}", content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                return json.loads(json_str)
-            else:
-                # If no JSON found, try parsing the entire content
-                return json.loads(content)
-        except json.JSONDecodeError:
-            raise ValueError(f"Could not parse LLM response as JSON: {content}")
-
 
 class GeminiProvider(LLMProvider):
     """Google Gemini provider for query parsing."""
@@ -1297,106 +1049,6 @@ class GeminiProvider(LLMProvider):
                 raise NetworkError(f"Network error connecting to Gemini: {e}")
             else:
                 raise LLMProviderError(f"Gemini API error: {str(e)}", provider="gemini")
-
-    def _get_system_prompt(self) -> str:
-        """Get the system prompt for query parsing."""
-        return """You are an AWS cost analysis assistant. Parse natural language queries about AWS costs and return structured JSON parameters.
-
-IMPORTANT: Today's date is August 24, 2025. Use this as the reference for relative dates.
-
-Extract these parameters from the user query:
-- service: AWS service name using EXACT AWS service names (see mapping below) or null if not specified
-- start_date: Start date in YYYY-MM-DD format or null
-- end_date: End date in YYYY-MM-DD format or null
-- granularity: DAILY, MONTHLY, or HOURLY (default: MONTHLY)
-- metrics: Array of metric types like ["BlendedCost"] (default: ["BlendedCost"])
-- group_by: Array of grouping dimensions like ["SERVICE"] or null
-- date_range_type: QUARTER, FISCAL_YEAR, CALENDAR_YEAR, or CUSTOM (null if not specified)
-- fiscal_year_start_month: Month when fiscal year starts (1-12, default: 1)
-- trend_analysis: PERIOD_OVER_PERIOD, YEAR_OVER_YEAR, MONTH_OVER_MONTH, QUARTER_OVER_QUARTER (null if not requested)
-- include_forecast: true if user asks for forecast/prediction, false otherwise
-- forecast_months: Number of months to forecast (default: 3)
-- cost_allocation_tags: Array of tag keys for cost allocation (null if not specified)
-
-AWS Service Name Mapping (use the exact names on the right):
-- S3 → "Amazon Simple Storage Service"
-- EC2 → "Amazon Elastic Compute Cloud - Compute"
-- RDS → "Amazon Relational Database Service"
-- Lambda → "AWS Lambda"
-- CloudFront → "Amazon CloudFront"
-- VPC → "Amazon Virtual Private Cloud"
-- Route 53 → "Amazon Route 53"
-- KMS → "AWS Key Management Service"
-- Secrets Manager → "AWS Secrets Manager"
-
-For relative dates:
-- "last month" = July 2025 (2025-07-01 to 2025-08-01)
-- "this month" = August 2025 (2025-08-01 to 2025-08-24)
-- "this year" = 2025 (2025-01-01 to 2025-08-24)
-- "last year" = 2024 (2024-01-01 to 2025-01-01)
-
-For specific years (IMPORTANT - use full year ranges):
-- "2025" or "all of 2025" or "for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
-- "2024" or "all of 2024" or "for 2024" = Full year 2024 (2024-01-01 to 2025-01-01)
-- "S3 costs for 2025" = Full year 2025 (2025-01-01 to 2026-01-01)
-
-For quarters:
-- "Q1 2025" = 2025-01-01 to 2025-04-01
-- "Q2 2025" = 2025-04-01 to 2025-07-01
-- "Q3 2025" = 2025-07-01 to 2025-10-01
-- "Q4 2025" = 2025-10-01 to 2026-01-01
-- "this quarter" = Q3 2025 (2025-07-01 to 2025-10-01)
-- "last quarter" = Q2 2025 (2025-04-01 to 2025-07-01)
-
-For fiscal years (assuming January start unless specified):
-- "FY2025" = 2025-01-01 to 2026-01-01
-- "fiscal year 2025" = 2025-01-01 to 2026-01-01
-
-For trend analysis queries:
-- "compared to last month" → trend_analysis: "MONTH_OVER_MONTH"
-- "vs last year" → trend_analysis: "YEAR_OVER_YEAR"
-- "compared to last quarter" → trend_analysis: "QUARTER_OVER_QUARTER"
-- "trend analysis" → trend_analysis: "PERIOD_OVER_PERIOD"
-
-For forecast queries:
-- "forecast", "predict", "projection" → include_forecast: true
-- "next 6 months" → forecast_months: 6
-
-IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
-- "What services did I use?"
-- "List the services that cost money"
-- "Show me service breakdown"
-- "Which services did I spend money on?"
-
-Return only valid JSON in this format:
-{
-  "service": null,
-  "start_date": "2025-07-01",
-  "end_date": "2025-08-01",
-  "granularity": "MONTHLY",
-  "metrics": ["BlendedCost"],
-  "group_by": ["SERVICE"],
-  "date_range_type": "QUARTER",
-  "fiscal_year_start_month": 1,
-  "trend_analysis": "MONTH_OVER_MONTH",
-  "include_forecast": false,
-  "forecast_months": 3,
-  "cost_allocation_tags": null
-}"""
-
-    def _parse_llm_response(self, content: str) -> Dict[str, Any]:
-        """Parse LLM response and extract JSON."""
-        try:
-            # Try to find JSON in the response
-            json_match = re.search(r"\{.*\}", content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-                return json.loads(json_str)
-            else:
-                # If no JSON found, try parsing the entire content
-                return json.loads(content)
-        except json.JSONDecodeError:
-            raise QueryParsingError(f"Could not parse LLM response as JSON: {content}")
 
 
 class FallbackParser:
@@ -1769,61 +1421,17 @@ class QueryParser:
         """
         Parse natural language query into structured parameters.
 
+        Delegates to ``parse_query_with_fallback`` so the configured provider
+        order (``llm_provider`` / ``fallback_providers``) is always respected
+        before falling back to pattern matching.
+
         Args:
             query: Natural language query string
 
         Returns:
             QueryParameters object with extracted parameters
         """
-        if not query or not query.strip():
-            raise QueryParsingError("Empty query provided")
-
-        last_error = None
-
-        # Try LLM providers first
-        for provider_name, provider in self._providers.items():
-            try:
-                if provider.is_available():
-                    # Use performance monitoring
-                    result = provider.parse_query_with_monitoring(query)
-                    params = self._convert_to_query_parameters(result)
-
-                    # Validate the parsed parameters
-                    if self.validate_parameters(params):
-                        return params
-                    else:
-                        # Continue to next provider if validation fails
-                        continue
-            except (LLMProviderError, NetworkError, QueryParsingError) as e:
-                last_error = e
-                continue
-            except Exception as e:
-                last_error = LLMProviderError(
-                    f"Unexpected error in {provider_name}: {str(e)}",
-                    provider=provider_name,
-                )
-                continue
-
-        # Fall back to pattern matching
-        try:
-            result = self.fallback_parser.parse_query(query)
-            params = self._convert_to_query_parameters(result)
-
-            if self.validate_parameters(params):
-                return params
-            else:
-                raise QueryParsingError(
-                    "Fallback parser produced invalid parameters", original_query=query
-                )
-
-        except Exception as e:
-            # If fallback also fails, raise the last LLM error or a generic parsing error
-            if last_error:
-                raise last_error
-            else:
-                raise QueryParsingError(
-                    f"All parsing methods failed: {str(e)}", original_query=query
-                )
+        return self.parse_query_with_fallback(query)
 
     def parse_query_with_fallback(self, query: str, preferred_provider: Optional[str] = None) -> QueryParameters:
         """
@@ -1833,7 +1441,8 @@ class QueryParser:
         1. Preferred provider (if specified)
         2. Default provider (ollama)
         3. Fallback providers from configuration
-        4. Pattern matching fallback
+        4. Any remaining initialized providers (registry order)
+        5. Pattern matching fallback
 
         Args:
             query: Natural language query string
@@ -1868,6 +1477,12 @@ class QueryParser:
             if provider_name not in providers_to_try and provider_name in self._providers:
                 providers_to_try.append(provider_name)
 
+        # 4. Add any remaining initialized providers (registry/insertion order) as a
+        # last resort, so an available provider is never silently skipped.
+        for provider_name in self._providers:
+            if provider_name not in providers_to_try:
+                providers_to_try.append(provider_name)
+
         # Try each provider in order
         for provider_name in providers_to_try:
             provider = self._providers[provider_name]
@@ -1893,7 +1508,7 @@ class QueryParser:
                 )
                 continue
 
-        # 4. Fall back to pattern matching
+        # 5. Fall back to pattern matching
         try:
             result = self.fallback_parser.parse_query(query)
             params = self._convert_to_query_parameters(result)
@@ -1911,7 +1526,7 @@ class QueryParser:
                 # Provide more context about what was tried
                 provider_list = ", ".join(providers_to_try) if providers_to_try else "none"
                 enhanced_error = QueryParsingError(
-                    f"All parsing methods failed. Tried providers: {provider_list}. "
+                    f"Failed to parse query. Tried providers: {provider_list}. "
                     f"Last error: {str(last_error)}. Fallback error: {str(fallback_error)}",
                     original_query=query
                 )
@@ -1920,7 +1535,7 @@ class QueryParser:
                 raise enhanced_error
             else:
                 raise QueryParsingError(
-                    f"All parsing methods failed: {str(fallback_error)}", original_query=query
+                    f"Failed to parse query: {str(fallback_error)}", original_query=query
                 )
 
     def validate_parameters(self, params: QueryParameters) -> bool:

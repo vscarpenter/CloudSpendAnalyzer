@@ -247,8 +247,12 @@ class ConfigurationError(AWSCostCLIError):
         super().__init__(message, "CONFIGURATION_ERROR", suggestions)
 
 
-class ParameterValidationError(AWSCostCLIError):
-    """Exception raised when parameter validation fails."""
+class ParameterValidationError(ValidationError):
+    """Exception raised when a specific query parameter fails validation.
+
+    Subclasses ValidationError so callers can catch all validation failures
+    (general and parameter-specific) with a single ``except ValidationError``.
+    """
 
     def __init__(
         self, message: str = "Parameter validation failed", field: Optional[str] = None
@@ -264,7 +268,10 @@ class ParameterValidationError(AWSCostCLIError):
         if field:
             suggestions.append(f"Issue with field: {field}")
 
-        super().__init__(message, "VALIDATION_ERROR", suggestions)
+        # Bypass ValidationError.__init__ (which has a different signature) and
+        # initialize the base error directly with parameter-specific suggestions.
+        AWSCostCLIError.__init__(self, message, "VALIDATION_ERROR", suggestions)
+        self.validation_errors = []
 
 
 def format_error_message(

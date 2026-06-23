@@ -720,31 +720,39 @@ class TestQueryParser:
     """Test cases for QueryParser class."""
 
     def test_init_openai_provider(self):
-        """Test initialization with OpenAI provider."""
+        """Test that an OpenAI provider is initialized from configuration.
+
+        Providers are created via ProviderFactory rather than a flat-config
+        constructor, so we assert on the initialized provider instance.
+        """
         config = {"provider": "openai", "api_key": "test-key", "model": "gpt-4"}
 
-        with patch("src.aws_cost_cli.query_processor.OpenAIProvider") as mock_provider:
-            parser = QueryParser(config)
-            mock_provider.assert_called_once_with("test-key", "gpt-4")
+        parser = QueryParser(config)
+
+        assert "openai" in parser._providers
+        provider = parser._providers["openai"]
+        assert isinstance(provider, OpenAIProvider)
+        assert provider.api_key == "test-key"
+        assert provider.model == "gpt-4"
 
     def test_init_anthropic_provider(self):
-        """Test initialization with Anthropic provider."""
+        """Test that an Anthropic provider is initialized from configuration."""
         config = {
             "provider": "anthropic",
             "api_key": "test-key",
             "model": "claude-3-sonnet-20240229",
         }
 
-        with patch(
-            "src.aws_cost_cli.query_processor.AnthropicProvider"
-        ) as mock_provider:
-            parser = QueryParser(config)
-            mock_provider.assert_called_once_with(
-                "test-key", "claude-3-sonnet-20240229"
-            )
+        parser = QueryParser(config)
+
+        assert "anthropic" in parser._providers
+        provider = parser._providers["anthropic"]
+        assert isinstance(provider, AnthropicProvider)
+        assert provider.api_key == "test-key"
+        assert provider.model == "claude-3-sonnet-20240229"
 
     def test_init_bedrock_provider(self):
-        """Test initialization with Bedrock provider."""
+        """Test that a Bedrock provider is initialized from configuration."""
         config = {
             "provider": "bedrock",
             "model": "anthropic.claude-3-haiku-20240307-v1:0",
@@ -752,42 +760,53 @@ class TestQueryParser:
             "profile": "production",
         }
 
-        with patch("src.aws_cost_cli.query_processor.BedrockProvider") as mock_provider:
-            parser = QueryParser(config)
-            mock_provider.assert_called_once_with(
-                "anthropic.claude-3-haiku-20240307-v1:0", "us-west-2", "production"
-            )
+        parser = QueryParser(config)
+
+        assert "bedrock" in parser._providers
+        provider = parser._providers["bedrock"]
+        assert isinstance(provider, BedrockProvider)
+        assert provider.model == "anthropic.claude-3-haiku-20240307-v1:0"
+        assert provider.region == "us-west-2"
+        assert provider.profile == "production"
 
     def test_init_bedrock_provider_defaults(self):
-        """Test initialization with Bedrock provider using defaults."""
+        """Test that a Bedrock provider uses default model/region when unspecified."""
         config = {"provider": "bedrock"}
 
-        with patch("src.aws_cost_cli.query_processor.BedrockProvider") as mock_provider:
-            parser = QueryParser(config)
-            mock_provider.assert_called_once_with(
-                "anthropic.claude-3-haiku-20240307-v1:0", "us-east-1", None
-            )
+        parser = QueryParser(config)
+
+        assert "bedrock" in parser._providers
+        provider = parser._providers["bedrock"]
+        assert isinstance(provider, BedrockProvider)
+        assert provider.model == "anthropic.claude-3-haiku-20240307-v1:0"
+        assert provider.region == "us-east-1"
+        assert provider.profile is None
 
     def test_init_ollama_provider(self):
-        """Test initialization with Ollama provider."""
+        """Test that an Ollama provider is initialized from configuration."""
         config = {
             "provider": "ollama",
             "model": "llama2",
             "base_url": "http://localhost:11434",
         }
 
-        with patch("src.aws_cost_cli.query_processor.OllamaProvider") as mock_provider:
-            parser = QueryParser(config)
-            mock_provider.assert_called_once_with("llama2", "http://localhost:11434")
+        parser = QueryParser(config)
+
+        assert "ollama" in parser._providers
+        provider = parser._providers["ollama"]
+        assert isinstance(provider, OllamaProvider)
+        assert provider.model == "llama2"
+        assert provider.base_url == "http://localhost:11434"
 
     def test_parse_query_with_llm_success(self):
         """Test successful query parsing with LLM provider."""
         config = {"provider": "openai", "api_key": "test-key"}
 
-        # Mock LLM provider
+        # Mock LLM provider. The parser invokes parse_query_with_monitoring,
+        # so configure the return value on that (the real call boundary).
         mock_provider = Mock()
         mock_provider.is_available.return_value = True
-        mock_provider.parse_query.return_value = {
+        mock_provider.parse_query_with_monitoring.return_value = {
             "service": "EC2",
             "start_date": "2024-01-01",
             "end_date": "2024-01-31",
@@ -796,12 +815,9 @@ class TestQueryParser:
             "group_by": ["SERVICE"],
         }
 
-        with patch(
-            "src.aws_cost_cli.query_processor.OpenAIProvider",
-            return_value=mock_provider,
-        ):
-            parser = QueryParser(config)
-            result = parser.parse_query("EC2 costs last month")
+        parser = QueryParser(config)
+        parser._providers = {"openai": mock_provider}
+        result = parser.parse_query("EC2 costs last month")
 
         assert isinstance(result, QueryParameters)
         assert result.service == "EC2"
@@ -812,17 +828,14 @@ class TestQueryParser:
         """Test fallback to pattern matching when LLM fails."""
         config = {"provider": "openai", "api_key": "test-key"}
 
-        # Mock LLM provider that fails
+        # Mock LLM provider that fails on the monitored parse call.
         mock_provider = Mock()
         mock_provider.is_available.return_value = True
-        mock_provider.parse_query.side_effect = Exception("API Error")
+        mock_provider.parse_query_with_monitoring.side_effect = Exception("API Error")
 
-        with patch(
-            "src.aws_cost_cli.query_processor.OpenAIProvider",
-            return_value=mock_provider,
-        ):
-            parser = QueryParser(config)
-            result = parser.parse_query("EC2 costs last month")
+        parser = QueryParser(config)
+        parser._providers = {"openai": mock_provider}
+        result = parser.parse_query("EC2 costs last month")
 
         assert isinstance(result, QueryParameters)
         assert result.service == "Amazon Elastic Compute Cloud - Compute"
@@ -946,14 +959,17 @@ class TestQueryParser:
         # Create parser and manually add multiple providers
         parser = QueryParser(config)
 
-        # Mock multiple providers - first fails, second succeeds
+        # Mock multiple providers - first fails, second succeeds. The parser
+        # invokes parse_query_with_monitoring, so configure that boundary.
         mock_provider1 = Mock()
         mock_provider1.is_available.return_value = True
-        mock_provider1.parse_query.side_effect = Exception("Provider 1 failed")
+        mock_provider1.parse_query_with_monitoring.side_effect = Exception(
+            "Provider 1 failed"
+        )
 
         mock_provider2 = Mock()
         mock_provider2.is_available.return_value = True
-        mock_provider2.parse_query.return_value = {
+        mock_provider2.parse_query_with_monitoring.return_value = {
             "service": "Lambda",
             "granularity": "HOURLY",
         }
@@ -966,5 +982,5 @@ class TestQueryParser:
         assert result.granularity == TimePeriodGranularity.HOURLY
 
         # Verify both providers were tried
-        mock_provider1.parse_query.assert_called_once()
-        mock_provider2.parse_query.assert_called_once()
+        mock_provider1.parse_query_with_monitoring.assert_called_once()
+        mock_provider2.parse_query_with_monitoring.assert_called_once()
