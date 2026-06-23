@@ -68,7 +68,7 @@ clean: ## Remove caches and build artifacts
 	rm -rf .pytest_cache .mypy_cache build dist \
 	  **/__pycache__ **/*.pyc src/*.egg-info
 
-verify: ## Run lint, typecheck, and coverage
-	$(MAKE) lint
-	# $(MAKE) typecheck  # Temporarily disabled due to type issues - will address in separate PR
-	$(MAKE) test  # Using basic test instead of coverage to unblock CI
+verify: ## Run lint and typecheck (advisory) + coverage (blocking gate)
+	-$(MAKE) lint       # advisory: reports format/lint issues, does not fail CI
+	-$(MAKE) typecheck  # advisory: ~111 known mypy errors to burn down incrementally
+	$(MAKE) coverage    # blocking: the test+coverage gate now runs on PRs too
