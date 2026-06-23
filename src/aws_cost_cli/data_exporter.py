@@ -128,59 +128,6 @@ class CSVExporter(DataExporter):
                 else:
                     writer.writerow(base_row)
 
-            # Add trend analysis if available
-            if cost_data.trend_data:
-                writer.writerow([])  # Empty row
-                writer.writerow(["# Trend Analysis"])
-                writer.writerow(
-                    [
-                        "Current Period Cost:",
-                        float(cost_data.trend_data.current_period.amount),
-                    ]
-                )
-                writer.writerow(
-                    [
-                        "Comparison Period Cost:",
-                        float(cost_data.trend_data.comparison_period.amount),
-                    ]
-                )
-                writer.writerow(
-                    ["Change Amount:", float(cost_data.trend_data.change_amount.amount)]
-                )
-                writer.writerow(
-                    ["Change Percentage:", cost_data.trend_data.change_percentage]
-                )
-                writer.writerow(
-                    ["Trend Direction:", cost_data.trend_data.trend_direction]
-                )
-
-            # Add forecast data if available
-            if cost_data.forecast_data:
-                writer.writerow([])  # Empty row
-                writer.writerow(["# Forecast Data"])
-                writer.writerow(
-                    [
-                        "Forecast Period Start",
-                        "Forecast Period End",
-                        "Forecasted Amount",
-                        "Lower Bound",
-                        "Upper Bound",
-                        "Accuracy",
-                    ]
-                )
-
-                for forecast in cost_data.forecast_data:
-                    writer.writerow(
-                        [
-                            forecast.forecast_period.start.date().isoformat(),
-                            forecast.forecast_period.end.date().isoformat(),
-                            float(forecast.forecasted_amount.amount),
-                            float(forecast.confidence_interval_lower.amount),
-                            float(forecast.confidence_interval_upper.amount),
-                            forecast.prediction_accuracy or "N/A",
-                        ]
-                    )
-
         return output_path
 
 
@@ -261,52 +208,6 @@ class JSONExporter(DataExporter):
 
             export_data["results"].append(result_data)
 
-        # Add trend analysis if available
-        if cost_data.trend_data:
-            export_data["trend_analysis"] = {
-                "current_period": {
-                    "amount": float(cost_data.trend_data.current_period.amount),
-                    "currency": cost_data.trend_data.current_period.unit,
-                },
-                "comparison_period": {
-                    "amount": float(cost_data.trend_data.comparison_period.amount),
-                    "currency": cost_data.trend_data.comparison_period.unit,
-                },
-                "change": {
-                    "amount": float(cost_data.trend_data.change_amount.amount),
-                    "currency": cost_data.trend_data.change_amount.unit,
-                    "percentage": cost_data.trend_data.change_percentage,
-                    "direction": cost_data.trend_data.trend_direction,
-                },
-            }
-
-        # Add forecast data if available
-        if cost_data.forecast_data:
-            export_data["forecast"] = []
-            for forecast in cost_data.forecast_data:
-                forecast_data = {
-                    "period": {
-                        "start": forecast.forecast_period.start.isoformat(),
-                        "end": forecast.forecast_period.end.isoformat(),
-                    },
-                    "forecasted_amount": {
-                        "amount": float(forecast.forecasted_amount.amount),
-                        "currency": forecast.forecasted_amount.unit,
-                    },
-                    "confidence_interval": {
-                        "lower": {
-                            "amount": float(forecast.confidence_interval_lower.amount),
-                            "currency": forecast.confidence_interval_lower.unit,
-                        },
-                        "upper": {
-                            "amount": float(forecast.confidence_interval_upper.amount),
-                            "currency": forecast.confidence_interval_upper.unit,
-                        },
-                    },
-                    "prediction_accuracy": forecast.prediction_accuracy,
-                }
-                export_data["forecast"].append(forecast_data)
-
         # Write JSON file
         with open(output_path, "w", encoding="utf-8") as jsonfile:
             json.dump(export_data, jsonfile, indent=2, ensure_ascii=False)
@@ -351,7 +252,6 @@ class ExcelExporter(DataExporter):
             start_color="366092", end_color="366092", fill_type="solid"
         )
         currency_format = '"$"#,##0.00'
-        percentage_format = "0.00%"
 
         # Create Summary sheet
         self._create_summary_sheet(
@@ -361,7 +261,6 @@ class ExcelExporter(DataExporter):
             header_font,
             header_fill,
             currency_format,
-            percentage_format,
         )
 
         # Create Detailed Data sheet
@@ -385,7 +284,6 @@ class ExcelExporter(DataExporter):
         header_font,
         header_fill,
         currency_format,
-        percentage_format,
     ):
         """Create the summary worksheet."""
         # Title and metadata
@@ -412,50 +310,6 @@ class ExcelExporter(DataExporter):
         ws["B8"] = float(cost_data.total_cost.amount)
         ws["B8"].number_format = currency_format
         ws["B8"].font = Font(size=14, bold=True, color="008000")
-
-        # Trend analysis if available
-        if cost_data.trend_data:
-            ws["A10"] = "Trend Analysis"
-            ws["A10"].font = header_font
-            ws["A10"].fill = header_fill
-
-            ws["A11"] = "Current Period:"
-            ws["B11"] = float(cost_data.trend_data.current_period.amount)
-            ws["B11"].number_format = currency_format
-
-            ws["A12"] = "Previous Period:"
-            ws["B12"] = float(cost_data.trend_data.comparison_period.amount)
-            ws["B12"].number_format = currency_format
-
-            ws["A13"] = "Change Amount:"
-            ws["B13"] = float(cost_data.trend_data.change_amount.amount)
-            ws["B13"].number_format = currency_format
-
-            ws["A14"] = "Change Percentage:"
-            ws["B14"] = cost_data.trend_data.change_percentage / 100
-            ws["B14"].number_format = percentage_format
-
-            # Color code the change
-            if cost_data.trend_data.change_percentage > 0:
-                ws["B13"].font = Font(color="FF0000")  # Red for increase
-                ws["B14"].font = Font(color="FF0000")
-            elif cost_data.trend_data.change_percentage < 0:
-                ws["B13"].font = Font(color="008000")  # Green for decrease
-                ws["B14"].font = Font(color="008000")
-
-        # Forecast summary if available
-        if cost_data.forecast_data:
-            start_row = 16 if cost_data.trend_data else 10
-
-            ws[f"A{start_row}"] = "Cost Forecast"
-            ws[f"A{start_row}"].font = header_font
-            ws[f"A{start_row}"].fill = header_fill
-
-            for i, forecast in enumerate(cost_data.forecast_data[:3], 1):
-                row = start_row + i
-                ws[f"A{row}"] = f"Month {i}:"
-                ws[f"B{row}"] = float(forecast.forecasted_amount.amount)
-                ws[f"B{row}"].number_format = currency_format
 
         # Auto-adjust column widths
         for column in ws.columns:
@@ -713,10 +567,6 @@ class EmailReporter:
                 body {{ font-family: Arial, sans-serif; margin: 20px; }}
                 .header {{ background-color: #f0f0f0; padding: 15px; border-radius: 5px; }}
                 .cost-summary {{ font-size: 24px; color: #2e7d32; font-weight: bold; margin: 20px 0; }}
-                .trend {{ margin: 15px 0; }}
-                .trend.up {{ color: #d32f2f; }}
-                .trend.down {{ color: #2e7d32; }}
-                .trend.stable {{ color: #f57c00; }}
                 table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
                 th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
                 th {{ background-color: #f2f2f2; }}
@@ -734,21 +584,6 @@ class EmailReporter:
                 Total Cost: ${cost_data.total_cost.amount:,.2f} {cost_data.total_cost.unit}
             </div>
         """
-
-        # Add trend analysis if available
-        if cost_data.trend_data:
-            trend_class = cost_data.trend_data.trend_direction
-            trend_symbol = (
-                "📈" if trend_class == "up" else "📉" if trend_class == "down" else "➡️"
-            )
-
-            html += f"""
-            <div class="trend {trend_class}">
-                <h3>Trend Analysis {trend_symbol}</h3>
-                <p><strong>Previous Period:</strong> ${cost_data.trend_data.comparison_period.amount:,.2f}</p>
-                <p><strong>Change:</strong> ${cost_data.trend_data.change_amount.amount:,.2f} ({cost_data.trend_data.change_percentage:+.1f}%)</p>
-            </div>
-            """
 
         # Add detailed breakdown if available
         if len(cost_data.results) > 1:
@@ -814,33 +649,6 @@ class EmailReporter:
                         <td>{cost}</td>
                     </tr>
                     """
-
-            html += "</table>"
-
-        # Add forecast if available
-        if cost_data.forecast_data:
-            html += """
-            <h3>Cost Forecast</h3>
-            <table>
-                <tr>
-                    <th>Period</th>
-                    <th>Forecasted Cost</th>
-                    <th>Range</th>
-                </tr>
-            """
-
-            for forecast in cost_data.forecast_data[:3]:
-                period = f"{forecast.forecast_period.start.date()} to {forecast.forecast_period.end.date()}"
-                forecasted = f"${forecast.forecasted_amount.amount:,.2f}"
-                range_text = f"${forecast.confidence_interval_lower.amount:,.2f} - ${forecast.confidence_interval_upper.amount:,.2f}"
-
-                html += f"""
-                <tr>
-                    <td>{period}</td>
-                    <td>{forecasted}</td>
-                    <td>{range_text}</td>
-                </tr>
-                """
 
             html += "</table>"
 

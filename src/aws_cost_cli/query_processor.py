@@ -452,9 +452,6 @@ Extract these parameters from the user query:
 - group_by: Array of grouping dimensions like ["SERVICE"] or null
 - date_range_type: QUARTER, FISCAL_YEAR, CALENDAR_YEAR, or CUSTOM (null if not specified)
 - fiscal_year_start_month: Month when fiscal year starts (1-12, default: 1)
-- trend_analysis: PERIOD_OVER_PERIOD, YEAR_OVER_YEAR, MONTH_OVER_MONTH, QUARTER_OVER_QUARTER (null if not requested)
-- include_forecast: true if user asks for forecast/prediction, false otherwise
-- forecast_months: Number of months to forecast (default: 3)
 - cost_allocation_tags: Array of tag keys for cost allocation (null if not specified)
 
 AWS Service Name Mapping (use the exact names on the right):
@@ -496,16 +493,6 @@ For specific months like "july 2025" or "in july 2025":
 
 For date ranges like "from X to Y", use the full range including both dates.
 
-For trend analysis queries:
-- "compared to last month" → trend_analysis: "MONTH_OVER_MONTH"
-- "vs last year" → trend_analysis: "YEAR_OVER_YEAR"
-- "compared to last quarter" → trend_analysis: "QUARTER_OVER_QUARTER"
-- "trend analysis" → trend_analysis: "PERIOD_OVER_PERIOD"
-
-For forecast queries:
-- "forecast", "predict", "projection" → include_forecast: true
-- "next 6 months" → forecast_months: 6
-
 IMPORTANT: For queries asking about service breakdown or listing services, set group_by to ["SERVICE"]. This includes queries like:
 - "What services did I use?"
 - "List the services that cost money"
@@ -522,9 +509,6 @@ Return only valid JSON in this format:
   "group_by": ["SERVICE"],
   "date_range_type": "QUARTER",
   "fiscal_year_start_month": 1,
-  "trend_analysis": "MONTH_OVER_MONTH",
-  "include_forecast": false,
-  "forecast_months": 3,
   "cost_allocation_tags": null
 }}"""
 
@@ -1127,28 +1111,6 @@ class FallbackParser:
             r"\beach\s+service\b",
         ]
 
-        # Patterns for trend analysis
-        self.trend_patterns = {
-            r"\bcompared\s+to\s+last\s+month\b": "MONTH_OVER_MONTH",
-            r"\bvs\s+last\s+month\b": "MONTH_OVER_MONTH",
-            r"\bcompared\s+to\s+last\s+year\b": "YEAR_OVER_YEAR",
-            r"\bvs\s+last\s+year\b": "YEAR_OVER_YEAR",
-            r"\bcompared\s+to\s+last\s+quarter\b": "QUARTER_OVER_QUARTER",
-            r"\bvs\s+last\s+quarter\b": "QUARTER_OVER_QUARTER",
-            r"\btrend\s+analysis\b": "PERIOD_OVER_PERIOD",
-            r"\bperiod\s+over\s+period\b": "PERIOD_OVER_PERIOD",
-        }
-
-        # Patterns for forecasting
-        self.forecast_patterns = [
-            r"\bforecast\b",
-            r"\bpredict\b",
-            r"\bprojection\b",
-            r"\bwhat\s+will\s+i\s+spend\b",
-            r"\bfuture\s+costs?\b",
-            r"\bnext\s+\d+\s+months?\b",
-        ]
-
     def parse_query(self, query: str) -> Dict[str, Any]:
         """Parse query using pattern matching fallback."""
         query_lower = query.lower()
@@ -1162,9 +1124,6 @@ class FallbackParser:
             "group_by": self._extract_group_by(query_lower),
             "date_range_type": self._extract_date_range_type(query_lower),
             "fiscal_year_start_month": 1,
-            "trend_analysis": self._extract_trend_analysis(query_lower),
-            "include_forecast": self._extract_forecast_request(query_lower),
-            "forecast_months": self._extract_forecast_months(query_lower),
             "cost_allocation_tags": None,
         }
 
@@ -1354,34 +1313,6 @@ class FallbackParser:
         ):
             return "CALENDAR_YEAR"
         return None
-
-    def _extract_trend_analysis(self, query: str) -> Optional[str]:
-        """Extract trend analysis type from query."""
-        for pattern, trend_type in self.trend_patterns.items():
-            if re.search(pattern, query, re.IGNORECASE):
-                return trend_type
-        return None
-
-    def _extract_forecast_request(self, query: str) -> bool:
-        """Check if query requests forecasting."""
-        for pattern in self.forecast_patterns:
-            if re.search(pattern, query, re.IGNORECASE):
-                return True
-        return False
-
-    def _extract_forecast_months(self, query: str) -> int:
-        """Extract number of months to forecast."""
-        # Look for patterns like "next 6 months"
-        match = re.search(r"\bnext\s+(\d+)\s+months?\b", query, re.IGNORECASE)
-        if match:
-            return int(match.group(1))
-
-        # Look for patterns like "6 month forecast"
-        match = re.search(r"\b(\d+)\s+months?\s+forecast\b", query, re.IGNORECASE)
-        if match:
-            return int(match.group(1))
-
-        return 3  # Default to 3 months
 
 
 class QueryParser:
@@ -1629,7 +1560,7 @@ class QueryParser:
 
     def _convert_to_query_parameters(self, result: Dict[str, Any]) -> QueryParameters:
         """Convert parsed result dictionary to QueryParameters object."""
-        from .models import DateRangeType, TrendAnalysisType
+        from .models import DateRangeType
 
         # Convert time period
         time_period = None
@@ -1671,14 +1602,6 @@ class QueryParser:
             except ValueError:
                 pass
 
-        # Convert trend analysis type
-        trend_analysis = None
-        if result.get("trend_analysis"):
-            try:
-                trend_analysis = TrendAnalysisType(result["trend_analysis"])
-            except ValueError:
-                pass
-
         return QueryParameters(
             service=result.get("service"),
             time_period=time_period,
@@ -1687,10 +1610,6 @@ class QueryParser:
             group_by=result.get("group_by"),
             date_range_type=date_range_type,
             fiscal_year_start_month=result.get("fiscal_year_start_month", 1),
-            trend_analysis=trend_analysis,
-            comparison_period=None,  # Will be calculated later if needed
-            include_forecast=result.get("include_forecast", False),
-            forecast_months=result.get("forecast_months", 3),
             cost_allocation_tags=result.get("cost_allocation_tags"),
         )
 

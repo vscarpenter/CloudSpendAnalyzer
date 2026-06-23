@@ -130,38 +130,6 @@ class TestDateFormatterAWSIntegration:
         # Should format as custom range
         assert "January 1" in result and "14, 2024" in result
     
-    def test_aws_get_cost_forecast_response(self):
-        """Test with AWS GetCostForecast response patterns."""
-        # Cost forecasts typically project 1-3 months into the future
-        forecast_periods = [
-            # Current month (partial)
-            TimePeriod(
-                start=datetime(2024, 1, 15, tzinfo=timezone.utc),
-                end=datetime(2024, 2, 1, tzinfo=timezone.utc)
-            ),
-            # Next full month
-            TimePeriod(
-                start=datetime(2024, 2, 1, tzinfo=timezone.utc),
-                end=datetime(2024, 3, 1, tzinfo=timezone.utc)
-            ),
-            # Month after that
-            TimePeriod(
-                start=datetime(2024, 3, 1, tzinfo=timezone.utc),
-                end=datetime(2024, 4, 1, tzinfo=timezone.utc)
-            ),
-        ]
-        
-        results = []
-        for period in forecast_periods:
-            result = self.formatter.format_time_period(period)
-            results.append(result)
-        
-        # First should be partial month
-        assert "January 15" in results[0] and "31, 2024" in results[0]
-        # Others should be full months
-        assert "February" in results[1] and "2024" in results[1]
-        assert "March" in results[2] and "2024" in results[2]
-    
     def test_aws_billing_period_patterns(self):
         """Test with AWS billing period patterns."""
         # AWS billing periods can have various patterns

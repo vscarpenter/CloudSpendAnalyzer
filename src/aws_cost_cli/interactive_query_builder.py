@@ -13,7 +13,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 
-from .models import TimePeriodGranularity, MetricType, DateRangeType, TrendAnalysisType
+from .models import TimePeriodGranularity, MetricType, DateRangeType
 from .query_processor import QueryParser
 from .exceptions import ValidationError, QueryParsingError
 
@@ -136,13 +136,6 @@ class QueryTemplateManager:
                 template="How do this year's costs compare to last year?",
                 category="comparison",
             ),
-            QueryTemplate(
-                name="Service Cost Trends",
-                description="Get cost trends for a specific service",
-                template="Show me {service} cost trends for the last 6 months",
-                category="comparison",
-                parameters={"service": "EC2"},
-            ),
             # Analysis queries
             QueryTemplate(
                 name="Service Breakdown",
@@ -157,12 +150,6 @@ class QueryTemplateManager:
                 template="What are my top 5 most expensive services {period}?",
                 category="analysis",
                 parameters={"period": "this year"},
-            ),
-            QueryTemplate(
-                name="Cost Forecast",
-                description="Get cost forecast for upcoming months",
-                template="What will my costs be for the next 3 months?",
-                category="analysis",
             ),
             # Budget and optimization
             QueryTemplate(

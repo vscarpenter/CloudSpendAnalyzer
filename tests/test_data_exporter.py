@@ -24,8 +24,6 @@ from src.aws_cost_cli.models import (
     TimePeriod,
     QueryParameters,
     Group,
-    TrendData,
-    ForecastData,
     TimePeriodGranularity,
     DateFormattingConfig,
 )
@@ -63,34 +61,12 @@ def sample_cost_data():
         )
         results.append(result)
 
-    # Create trend data
-    trend_data = TrendData(
-        current_period=CostAmount(Decimal("300"), "USD"),
-        comparison_period=CostAmount(Decimal("250"), "USD"),
-        change_amount=CostAmount(Decimal("50"), "USD"),
-        change_percentage=20.0,
-        trend_direction="up",
-    )
-
-    # Create forecast data
-    forecast_data = [
-        ForecastData(
-            forecasted_amount=CostAmount(Decimal("320"), "USD"),
-            confidence_interval_lower=CostAmount(Decimal("300"), "USD"),
-            confidence_interval_upper=CostAmount(Decimal("340"), "USD"),
-            forecast_period=TimePeriod(datetime(2024, 2, 1), datetime(2024, 2, 29)),
-            prediction_accuracy=0.85,
-        )
-    ]
-
     return CostData(
         results=results,
         time_period=TimePeriod(start_date, end_date),
         total_cost=CostAmount(Decimal("525"), "USD"),
         currency="USD",
         group_definitions=["SERVICE"],
-        trend_data=trend_data,
-        forecast_data=forecast_data,
     )
 
 
@@ -220,34 +196,6 @@ class TestCSVExporter:
             if os.path.exists(output_path):
                 os.unlink(output_path)
 
-    def test_csv_export_with_trend_and_forecast(
-        self, sample_cost_data, sample_query_params
-    ):
-        """Test CSV export includes trend and forecast data."""
-        exporter = CSVExporter()
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            output_path = f.name
-
-        try:
-            exporter.export(sample_cost_data, sample_query_params, output_path)
-
-            with open(output_path, "r", encoding="utf-8") as f:
-                content = f.read()
-
-            # Check for trend analysis
-            assert "# Trend Analysis" in content
-            assert "Current Period Cost:,300.0" in content
-            assert "Change Percentage:,20.0" in content
-
-            # Check for forecast data
-            assert "# Forecast Data" in content
-            assert "Forecast Period Start" in content
-
-        finally:
-            if os.path.exists(output_path):
-                os.unlink(output_path)
-
 
 class TestJSONExporter:
     """Test JSON export functionality."""
@@ -342,39 +290,6 @@ class TestJSONExporter:
                 result_formatted = result_time_period["formatted"]
                 assert result_formatted
                 assert result_formatted != "Invalid date range"
-
-        finally:
-            if os.path.exists(output_path):
-                os.unlink(output_path)
-
-    def test_json_export_with_trend_and_forecast(
-        self, sample_cost_data, sample_query_params
-    ):
-        """Test JSON export includes trend and forecast data."""
-        exporter = JSONExporter()
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            output_path = f.name
-
-        try:
-            exporter.export(sample_cost_data, sample_query_params, output_path)
-
-            with open(output_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            # Check trend analysis
-            assert "trend_analysis" in data
-            trend = data["trend_analysis"]
-            assert trend["current_period"]["amount"] == 300.0
-            assert trend["change"]["percentage"] == 20.0
-            assert trend["change"]["direction"] == "up"
-
-            # Check forecast data
-            assert "forecast" in data
-            assert len(data["forecast"]) == 1
-            forecast = data["forecast"][0]
-            assert forecast["forecasted_amount"]["amount"] == 320.0
-            assert forecast["prediction_accuracy"] == 0.85
 
         finally:
             if os.path.exists(output_path):
@@ -539,9 +454,6 @@ class TestEmailReporter:
         assert "<html>" in body
         assert "AWS Cost Report for EC2" in body
         assert "$525.00" in body
-        assert "Trend Analysis" in body
-        assert "📈" in body  # Trend up symbol
-        assert "Cost Forecast" in body
 
 
 class TestExportManager:
@@ -940,10 +852,7 @@ class TestIntegration:
             assert "metadata" in data
             assert "summary" in data
             assert "results" in data
-            assert "trend_analysis" in data
-            assert "forecast" in data
 
             # Verify data integrity
             assert data["summary"]["total_cost"]["amount"] == 525.0
             assert len(data["results"]) == 3
-            assert data["trend_analysis"]["change"]["direction"] == "up"

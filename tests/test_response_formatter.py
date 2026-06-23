@@ -543,50 +543,6 @@ class TestLLMResponseFormatter:
         assert summary["time_period"]["formatted"] == "Q1 2024"
         assert summary["results"][0]["period"]["formatted"] == "Q1 2024"
 
-    def test_prepare_cost_summary_formatted_dates_with_forecast(self):
-        """Test that forecast data includes formatted dates."""
-        from src.aws_cost_cli.models import ForecastData
-
-        forecast_period = TimePeriod(
-            start=datetime(2024, 2, 1, tzinfo=timezone.utc),
-            end=datetime(2024, 3, 1, tzinfo=timezone.utc),
-        )
-
-        forecast_data = [
-            ForecastData(
-                forecast_period=forecast_period,
-                forecasted_amount=CostAmount(Decimal("150.00"), "USD"),
-                confidence_interval_lower=CostAmount(Decimal("120.00"), "USD"),
-                confidence_interval_upper=CostAmount(Decimal("180.00"), "USD"),
-                prediction_accuracy=0.85,
-            )
-        ]
-
-        cost_data = CostData(
-            results=[
-                CostResult(
-                    time_period=self.time_period,
-                    total=CostAmount(Decimal("123.45"), "USD"),
-                    groups=[],
-                    estimated=False,
-                )
-            ],
-            time_period=self.time_period,
-            total_cost=CostAmount(Decimal("123.45"), "USD"),
-            forecast_data=forecast_data,
-        )
-
-        summary = self.formatter._prepare_cost_summary(cost_data, self.query_params)
-
-        # Check forecast has formatted dates
-        assert len(summary["forecast"]) == 1
-        forecast = summary["forecast"][0]
-        assert "formatted" in forecast["period"]
-        assert "February" in forecast["period"]["formatted"]
-        assert "2024" in forecast["period"]["formatted"]
-        assert forecast["period"]["start"] == "2024-02-01"
-        assert forecast["period"]["end"] == "2024-03-01"
-
     def test_system_prompt_mentions_formatted_dates(self):
         """Test that the system prompt instructs LLM to use formatted dates."""
         system_prompt = self.formatter._get_response_system_prompt()

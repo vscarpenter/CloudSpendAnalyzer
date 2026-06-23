@@ -24,15 +24,6 @@ class DateRangeType(Enum):
     CUSTOM = "CUSTOM"
 
 
-class TrendAnalysisType(Enum):
-    """Types of trend analysis."""
-
-    PERIOD_OVER_PERIOD = "PERIOD_OVER_PERIOD"
-    YEAR_OVER_YEAR = "YEAR_OVER_YEAR"
-    MONTH_OVER_MONTH = "MONTH_OVER_MONTH"
-    QUARTER_OVER_QUARTER = "QUARTER_OVER_QUARTER"
-
-
 class MetricType(Enum):
     """Cost metric types."""
 
@@ -70,10 +61,6 @@ class QueryParameters:
     # Advanced query features
     date_range_type: Optional[DateRangeType] = None
     fiscal_year_start_month: int = 1  # January by default
-    trend_analysis: Optional[TrendAnalysisType] = None
-    comparison_period: Optional[TimePeriod] = None
-    include_forecast: bool = False
-    forecast_months: int = 3
     cost_allocation_tags: Optional[List[str]] = None
 
     def __post_init__(self):
@@ -108,28 +95,6 @@ class CostResult:
 
 
 @dataclass
-class TrendData:
-    """Trend analysis data for period-over-period comparisons."""
-
-    current_period: CostAmount
-    comparison_period: CostAmount
-    change_amount: CostAmount
-    change_percentage: float
-    trend_direction: str  # "up", "down", "stable"
-
-
-@dataclass
-class ForecastData:
-    """Cost forecast data."""
-
-    forecasted_amount: CostAmount
-    confidence_interval_lower: CostAmount
-    confidence_interval_upper: CostAmount
-    forecast_period: TimePeriod
-    prediction_accuracy: Optional[float] = None
-
-
-@dataclass
 class CostData:
     """Complete cost data response."""
 
@@ -138,9 +103,6 @@ class CostData:
     total_cost: CostAmount
     currency: str = "USD"
     group_definitions: List[str] = None
-    # Advanced features
-    trend_data: Optional[TrendData] = None
-    forecast_data: Optional[List[ForecastData]] = None
 
     def __post_init__(self):
         if self.group_definitions is None:

@@ -403,17 +403,12 @@ class QueryPipeline:
             except CacheError as e:
                 self.logger.warning(f"Cache error: {e.message}")
 
-        # Fetch from AWS (with advanced features if requested)
+        # Fetch from AWS
         try:
-            # Check if advanced features are requested
-            if query_params.trend_analysis or query_params.include_forecast:
-                cost_data = self.aws_client.get_advanced_cost_data(query_params)
-                result.metadata["advanced_features_used"] = True
-            else:
-                cost_data = self.aws_client.get_cost_and_usage(
-                    query_params, use_cache=use_cache
-                )
-                result.api_calls_made = 1
+            cost_data = self.aws_client.get_cost_and_usage(
+                query_params, use_cache=use_cache
+            )
+            result.api_calls_made = 1
 
             result.metadata["data_source"] = "aws_api"
             self.logger.debug("Fetched data from AWS API")

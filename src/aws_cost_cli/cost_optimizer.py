@@ -73,7 +73,6 @@ class BudgetVariance:
     variance_percentage: float
     time_period: TimePeriod
     is_over_budget: bool
-    forecast_end_of_period: Optional[CostAmount] = None
 
 
 @dataclass
