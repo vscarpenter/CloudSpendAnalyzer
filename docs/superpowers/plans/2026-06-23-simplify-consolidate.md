@@ -261,6 +261,20 @@ def test_this_year_anchors_to_now():
 
 ---
 
+## Progress log (2026-06-23)
+
+**Suite: 69 failed → 0 failed / 614 passed, hermetic (~7s). Source ~15.9K → ~12.6K lines (plus ~3.7K test lines removed). 18 commits on `refactor/simplify-consolidate`.**
+
+Done:
+- **Phase 0** ✓ — hermetic `conftest.py` (block network + frame-aware sleep + HOME isolation + dummy AWS profile; 2h→7s); deleted `validation.py`, `test_ollama.py`; untracked `.pyc`.
+- **Phase 1** — 1.1/1.2 dates anchored to `now` via `date_utils` ✓; 1.3 real date in prompts (folded into 2.1) ✓; 1.6 API-key masking ✓. **Deferred: 1.4 (granularity-from-range), 1.5 (loud empty results).**
+- **Phase 2** — 2.1 shared prompt builder ✓; 2.2 shared JSON parser ✓; 2.3 collapse parse methods + fix all-provider-iteration ✓. **Deferred: 2.4 (provider CLI command consolidation).**
+- **Phase 3** — 3.1 deleted `performance.py` ✓; 3.2 reduced `health.py` 541→66 + dropped `psutil` ✓; 3.4 collapsed `date_formatter.py` 911→135 ✓. **Deferred: 3.3 (delete `trend_analysis.py`).**
+- **Phase 4** — 4.4 unified cache API ✓ (done early). **Deferred: 4.1 export trim, 4.2 optimizer trim, 4.3 interactive trim, 4.5 cli.py decomposition, 4.6 exceptions slim.**
+- **Bonus** — drove the entire suite to green (was red even before this effort).
+
+Remaining (all deferred items above), highest-value first: 3.3 trend deletion (~480 lines + removes triple-fetch); 4.5 cli.py decomposition (still ~2.7K lines); 4.1/4.2/4.3 feature trims; 2.4 provider CLI group; 4.6 exceptions; Phase 5 (re-enable mypy/coverage CI, update docs, delete `simple/`). Note: `simple/` is untracked (never committed) so it doesn't affect the branch.
+
 ## Self-review notes
 
 - **Spec coverage:** every spec phase maps to tasks above (Phase 0→Tasks 0.x, …, Phase 5→Tasks 5.x). The capability-expansion items are intentionally out of scope per the spec.
