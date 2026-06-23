@@ -9,6 +9,7 @@ from src.aws_cost_cli.models import (
     Config,
     QueryParameters,
     CostData,
+    CostResult,
     CostAmount,
     TimePeriod,
     TimePeriodGranularity,
@@ -81,11 +82,21 @@ class TestQueryPipeline:
         mock_parse_query.return_value = mock_query_params
         mock_validate_params.return_value = True
 
+        # Use a non-empty results list so this exercises the real success path.
+        # (Empty results now signal "no data" and are surfaced with an explicit
+        # message rather than passed to the formatter, so a $100 total must come
+        # with at least one CostResult to be a realistic success case.)
+        now = datetime.now(timezone.utc)
         mock_cost_data = CostData(
-            results=[],
-            time_period=TimePeriod(
-                start=datetime.now(timezone.utc), end=datetime.now(timezone.utc)
-            ),
+            results=[
+                CostResult(
+                    time_period=TimePeriod(start=now, end=now),
+                    total=CostAmount(amount=100.0),
+                    groups=[],
+                    estimated=False,
+                )
+            ],
+            time_period=TimePeriod(start=now, end=now),
             total_cost=CostAmount(amount=100.0),
             group_definitions=[],
         )
@@ -300,6 +311,50 @@ class TestQueryPipeline:
         # Verify cache was not checked
         mock_get_cached_data.assert_not_called()
         mock_get_cost_data.assert_called_once()
+
+    @patch("src.aws_cost_cli.aws_client.CredentialManager.validate_credentials")
+    @patch("src.aws_cost_cli.aws_client.AWSCostClient.validate_permissions")
+    @patch("src.aws_cost_cli.query_processor.QueryParser.parse_query")
+    @patch("src.aws_cost_cli.query_processor.QueryParser.validate_parameters")
+    @patch("src.aws_cost_cli.aws_client.AWSCostClient.get_cost_and_usage")
+    def test_empty_results_surface_no_data_message(
+        self,
+        mock_get_cost_data,
+        mock_validate_params,
+        mock_parse_query,
+        mock_validate_permissions,
+        mock_validate_credentials,
+    ):
+        """Empty cost results surface an explicit no-data message, not '$0.00'."""
+        mock_validate_credentials.return_value = True
+        mock_validate_permissions.return_value = True
+        mock_parse_query.return_value = QueryParameters()
+        mock_validate_params.return_value = True
+
+        # AWS returned no rows: empty results, zero total.
+        mock_cost_data = CostData(
+            results=[],
+            time_period=TimePeriod(
+                start=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                end=datetime(2024, 2, 1, tzinfo=timezone.utc),
+            ),
+            total_cost=CostAmount(amount=0.0),
+            group_definitions=[],
+        )
+        mock_get_cost_data.return_value = mock_cost_data
+
+        config = Config()
+        pipeline = QueryPipeline(config=config)
+        context = QueryContext(original_query="EC2 costs in January 2024")
+
+        result = pipeline.process_query(context)
+
+        # The query "succeeds" but the response must clearly say there is no data
+        # rather than silently reporting a $0.00 total.
+        assert result.success is True
+        assert result.metadata.get("no_data") is True
+        assert "$0.00" not in result.formatted_response
+        assert "no cost data" in result.formatted_response.lower()
 
 
 class TestQueryPipelineHelpers:

@@ -315,6 +315,34 @@ class AWSCostClient:
                         f"Failed to get dimension values for {dimension}: {e}"
                     )
 
+    # AWS Cost Explorer requires MONTHLY periods to align to month boundaries.
+    # For shorter ranges DAILY is both valid and more informative, so we switch
+    # to DAILY when a range spans less than roughly two months.
+    _MONTHLY_THRESHOLD_DAYS = 62
+
+    def _resolve_granularity(
+        self,
+        time_period: TimePeriod,
+        granularity: TimePeriodGranularity,
+    ) -> TimePeriodGranularity:
+        """Pick a granularity that matches the length of the requested range.
+
+        An explicitly non-default granularity (DAILY or HOURLY) is always kept.
+        The default MONTHLY granularity is only downgraded to DAILY when the
+        range is sub-month-ish, which is the broken case: MONTHLY on a short,
+        non-month-aligned range returns a single coarse bucket (or a malformed
+        request) instead of a useful breakdown.
+        """
+        # Anything the caller set away from the MONTHLY default is respected.
+        if granularity != TimePeriodGranularity.MONTHLY:
+            return granularity
+
+        range_days = (time_period.end - time_period.start).days
+        if range_days < self._MONTHLY_THRESHOLD_DAYS:
+            return TimePeriodGranularity.DAILY
+
+        return TimePeriodGranularity.MONTHLY
+
     def _build_cost_request(self, params: QueryParameters) -> Dict[str, Any]:
         """Build the Cost Explorer API request from query parameters."""
         # Default time period if not specified (last 30 days)
@@ -328,12 +356,16 @@ class AWSCostClient:
         else:
             time_period = params.time_period
 
+        granularity = self._resolve_granularity(time_period, params.granularity)
+
         request = {
             "TimePeriod": {
+                # End is the exclusive upper bound; producers already emit an
+                # exclusive end, so pass it through unchanged.
                 "Start": time_period.start.strftime("%Y-%m-%d"),
                 "End": time_period.end.strftime("%Y-%m-%d"),
             },
-            "Granularity": params.granularity.value,
+            "Granularity": granularity.value,
             "Metrics": [metric.value for metric in params.metrics],
         }
 

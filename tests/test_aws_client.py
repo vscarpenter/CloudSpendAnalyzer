@@ -294,7 +294,10 @@ class TestAWSCostClient:
 
         assert request["TimePeriod"]["Start"] == "2024-01-01"
         assert request["TimePeriod"]["End"] == "2024-01-31"
-        assert request["Granularity"] == "MONTHLY"
+        # New contract: a sub-month range (~30 days) resolves to DAILY granularity.
+        # MONTHLY on a non-month-aligned sub-month range is the broken case, so the
+        # default MONTHLY is corrected to DAILY by _resolve_granularity.
+        assert request["Granularity"] == "DAILY"
         assert request["Metrics"] == ["BlendedCost"]
         assert request["Filter"]["Dimensions"]["Key"] == "SERVICE"
         assert request["Filter"]["Dimensions"]["Values"] == [
@@ -597,3 +600,126 @@ class TestAWSCostClient:
         assert (end_date - start_date).days == 30
         assert request["Granularity"] == "DAILY"
         assert request["Metrics"] == ["BlendedCost"]
+
+    @patch("boto3.Session")
+    def test_build_cost_request_submonth_range_uses_daily(self, mock_session_class):
+        """A sub-month range (~10 days) resolves to DAILY granularity."""
+        mock_session = Mock()
+        mock_session.client.return_value = Mock()
+        mock_session_class.return_value = mock_session
+
+        client = AWSCostClient()
+
+        # ~10 day range; granularity left at the MONTHLY default.
+        time_period = TimePeriod(start=datetime(2024, 3, 1), end=datetime(2024, 3, 11))
+        params = QueryParameters(
+            time_period=time_period,
+            granularity=TimePeriodGranularity.MONTHLY,
+            metrics=[MetricType.BLENDED_COST],
+        )
+
+        request = client._build_cost_request(params)
+
+        assert request["Granularity"] == "DAILY"
+        # End is passed through as the exclusive upper bound unchanged.
+        assert request["TimePeriod"]["Start"] == "2024-03-01"
+        assert request["TimePeriod"]["End"] == "2024-03-11"
+
+    @patch("boto3.Session")
+    def test_build_cost_request_multimonth_range_uses_monthly(self, mock_session_class):
+        """A multi-month range (> ~62 days) uses MONTHLY granularity."""
+        mock_session = Mock()
+        mock_session.client.return_value = Mock()
+        mock_session_class.return_value = mock_session
+
+        client = AWSCostClient()
+
+        # ~3 month range; granularity left at the MONTHLY default.
+        time_period = TimePeriod(start=datetime(2024, 1, 1), end=datetime(2024, 4, 1))
+        params = QueryParameters(
+            time_period=time_period,
+            granularity=TimePeriodGranularity.MONTHLY,
+            metrics=[MetricType.BLENDED_COST],
+        )
+
+        request = client._build_cost_request(params)
+
+        assert request["Granularity"] == "MONTHLY"
+
+    @patch("boto3.Session")
+    def test_build_cost_request_explicit_granularity_respected(self, mock_session_class):
+        """An explicitly-set (non-default) granularity is not overridden."""
+        mock_session = Mock()
+        mock_session.client.return_value = Mock()
+        mock_session_class.return_value = mock_session
+
+        client = AWSCostClient()
+
+        # Multi-month range with an explicit DAILY granularity. Even though a
+        # multi-month range would otherwise resolve to MONTHLY, the explicit
+        # non-default DAILY granularity must be preserved.
+        time_period = TimePeriod(start=datetime(2024, 1, 1), end=datetime(2024, 4, 1))
+        params = QueryParameters(
+            time_period=time_period,
+            granularity=TimePeriodGranularity.DAILY,
+            metrics=[MetricType.BLENDED_COST],
+        )
+
+        request = client._build_cost_request(params)
+
+        assert request["Granularity"] == "DAILY"
+
+    @patch("boto3.Session")
+    def test_build_cost_request_single_closed_month_end_exclusive(
+        self, mock_session_class
+    ):
+        """A single closed month produces Start/End one month apart (exclusive End)."""
+        mock_session = Mock()
+        mock_session.client.return_value = Mock()
+        mock_session_class.return_value = mock_session
+
+        client = AWSCostClient()
+
+        # Start = 1st of month, End = 1st of next month (exclusive upper bound).
+        time_period = TimePeriod(start=datetime(2024, 1, 1), end=datetime(2024, 2, 1))
+        params = QueryParameters(
+            time_period=time_period,
+            granularity=TimePeriodGranularity.MONTHLY,
+            metrics=[MetricType.BLENDED_COST],
+        )
+
+        request = client._build_cost_request(params)
+
+        # End must be passed through unchanged as the exclusive bound: no
+        # off-by-one day adjustment should be applied.
+        assert request["TimePeriod"]["Start"] == "2024-01-01"
+        assert request["TimePeriod"]["End"] == "2024-02-01"
+
+    @patch("boto3.Session")
+    def test_parse_cost_response_empty_results_is_detectable(self, mock_session_class):
+        """Empty ResultsByTime yields empty results so callers can detect 'no data'.
+
+        The empty ``results`` list is the signal that distinguishes a genuine
+        absence of data from a real $0.00 total, rather than silently fabricating
+        a zero-cost result.
+        """
+        mock_session = Mock()
+        mock_session.client.return_value = Mock()
+        mock_session_class.return_value = mock_session
+
+        client = AWSCostClient()
+
+        time_period = TimePeriod(start=datetime(2024, 1, 1), end=datetime(2024, 2, 1))
+        params = QueryParameters(
+            time_period=time_period,
+            granularity=TimePeriodGranularity.MONTHLY,
+            metrics=[MetricType.BLENDED_COST],
+        )
+
+        # Cost Explorer returned no rows at all.
+        cost_data = client._parse_cost_response({"ResultsByTime": []}, params)
+
+        assert cost_data.results == []
+        # The overall period still reflects what was actually queried.
+        assert cost_data.time_period.start == datetime(2024, 1, 1)
+        assert cost_data.time_period.end == datetime(2024, 2, 1)

@@ -434,6 +434,16 @@ class QueryPipeline:
         """Generate formatted response."""
         self.logger.debug(f"Generating response in format: {context.output_format}")
 
+        # Empty results mean AWS returned no cost data for this period. Surface
+        # that explicitly instead of letting a formatter render a misleading
+        # "$0.00" total that looks like a real (but zero) charge. Use getattr so
+        # a non-CostData payload (e.g. a raw dict in tests) is left to the
+        # formatter unchanged rather than being misread as "no data".
+        results = getattr(cost_data, "results", None)
+        if results is not None and len(results) == 0:
+            result.metadata["no_data"] = True
+            return self._format_no_data_message(cost_data)
+
         # Initialize response generator if needed
         if not self.response_generator:
             llm_provider = None
@@ -490,6 +500,23 @@ class QueryPipeline:
 
         except Exception as e:
             raise AWSCostCLIError(f"Failed to generate response: {str(e)}")
+
+    def _format_no_data_message(self, cost_data: CostData) -> str:
+        """Build an explicit 'no cost data' message for an empty result set."""
+        period = cost_data.time_period
+        try:
+            start = period.start.strftime("%Y-%m-%d")
+            end = period.end.strftime("%Y-%m-%d")
+            period_text = f" for {start} to {end}"
+        except Exception:
+            period_text = ""
+
+        return (
+            f"No cost data available{period_text}. "
+            "AWS Cost Explorer returned no results for this query. This usually "
+            "means there were no charges in this period, the data is not yet "
+            "available, or the service/filter did not match any usage."
+        )
 
     def handle_ambiguous_query(self, context: QueryContext) -> List[str]:
         """
