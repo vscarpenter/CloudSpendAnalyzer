@@ -64,7 +64,6 @@ class TestCostOptimizer:
         optimizer._get_reserved_instance_recommendations = Mock(return_value=[])
         optimizer._get_savings_plan_recommendations = Mock(return_value=[])
         optimizer._detect_cost_anomalies = Mock(return_value=[])
-        optimizer._analyze_budget_variances = Mock(return_value=[])
 
         report = optimizer.generate_optimization_report(analysis_period)
 
@@ -72,6 +71,8 @@ class TestCostOptimizer:
         assert len(report.recommendations) == 1
         assert report.total_potential_savings.amount == Decimal("50.0")
         assert report.analysis_period == analysis_period
+        # Budget variance analysis was removed; the field stays present but empty.
+        assert report.budget_variances == []
 
         # Verify all analysis methods were called
         optimizer._analyze_unused_resources.assert_called_once_with(analysis_period)
@@ -81,7 +82,6 @@ class TestCostOptimizer:
         optimizer._get_reserved_instance_recommendations.assert_called_once()
         optimizer._get_savings_plan_recommendations.assert_called_once()
         optimizer._detect_cost_anomalies.assert_called_once_with(analysis_period)
-        optimizer._analyze_budget_variances.assert_called_once_with(analysis_period)
 
     def test_analyze_unused_resources(self, optimizer, analysis_period):
         """Test unused resources analysis."""
@@ -123,7 +123,39 @@ class TestCostOptimizer:
         assert ebs_rec is not None
         assert ebs_rec.type == OptimizationType.UNUSED_RESOURCES
         assert ebs_rec.resource_id == "vol-12345"
-        assert ebs_rec.potential_savings.amount > 0
+        # Savings are no longer fabricated from hardcoded pricing.
+        assert ebs_rec.potential_savings.amount == Decimal("0")
+        assert ebs_rec.metadata["savings_estimated"] is False
+        # Availability zone should be converted to its region (us-east-1a -> us-east-1),
+        # not mangled by stripping trailing letters.
+        assert ebs_rec.region == "us-east-1"
+
+    def test_ebs_volume_region_strips_only_az_suffix(self, optimizer, analysis_period):
+        """AZ->region conversion must drop only the trailing zone letter.
+
+        Regression test for the old ``rstrip("abcdef")`` behaviour, which
+        removes *every* trailing character in the set rather than the single
+        availability-zone suffix. For a zone label ending in multiple such
+        letters, ``rstrip`` over-strips while ``[:-1]`` removes exactly one.
+        """
+        zone = "us-east-1dda"  # rstrip("abcdef") -> "us-east-1"; [:-1] -> "us-east-1dd"
+        optimizer.ec2_client.describe_volumes.return_value = {
+            "Volumes": [
+                {
+                    "VolumeId": "vol-strip",
+                    "Size": 10,
+                    "VolumeType": "gp3",
+                    "AvailabilityZone": zone,
+                }
+            ]
+        }
+        optimizer.ec2_client.describe_addresses.return_value = {"Addresses": []}
+        optimizer.rds_client.describe_db_instances.return_value = {"DBInstances": []}
+
+        recommendations = optimizer._analyze_unused_resources(analysis_period)
+
+        ebs_rec = next(r for r in recommendations if r.resource_id == "vol-strip")
+        assert ebs_rec.region == zone[:-1] == "us-east-1dd"
 
     def test_analyze_rightsizing_opportunities(self, optimizer, analysis_period):
         """Test rightsizing opportunities analysis."""
@@ -230,41 +262,6 @@ class TestCostOptimizer:
         assert anomaly.variance_percentage == 25.5
         assert anomaly.severity == SeverityLevel.HIGH  # > $100
 
-    def test_analyze_budget_variances(self, optimizer, analysis_period):
-        """Test budget variance analysis."""
-        # Mock STS response for account ID
-        with patch("boto3.Session") as mock_session:
-            mock_sts = Mock()
-            mock_sts.get_caller_identity.return_value = {"Account": "123456789012"}
-            mock_session.return_value.client.return_value = mock_sts
-
-            optimizer.session.client.return_value = mock_sts
-
-            # Mock Budgets response
-            optimizer.budgets_client.describe_budgets.return_value = {
-                "Budgets": [
-                    {
-                        "BudgetName": "Monthly-Budget",
-                        "BudgetLimit": {"Amount": "1000.00"},
-                    }
-                ]
-            }
-
-            # Mock actual spending calculation
-            optimizer._get_actual_spending_for_budget = Mock(
-                return_value=Decimal("1200.00")
-            )
-
-            variances = optimizer._analyze_budget_variances(analysis_period)
-
-            assert len(variances) == 1
-            variance = variances[0]
-            assert variance.budget_name == "Monthly-Budget"
-            assert variance.budgeted_amount.amount == Decimal("1000.00")
-            assert variance.actual_amount.amount == Decimal("1200.00")
-            assert variance.is_over_budget is True
-            assert variance.variance_percentage == 20.0
-
     def test_find_unused_ebs_volumes(self, optimizer):
         """Test finding unused EBS volumes."""
         optimizer.ec2_client.describe_volumes.return_value = {
@@ -286,14 +283,12 @@ class TestCostOptimizer:
 
         volumes = optimizer._find_unused_ebs_volumes()
 
+        # All unattached volumes are returned; no fabricated cost estimates.
         assert len(volumes) == 2
-
-        # Check cost estimation
-        gp3_volume = next(v for v in volumes if v["VolumeId"] == "vol-12345")
-        assert gp3_volume["estimated_monthly_cost"] == 50 * 0.08  # gp3 cost
-
-        io1_volume = next(v for v in volumes if v["VolumeId"] == "vol-67890")
-        assert io1_volume["estimated_monthly_cost"] == 100 * 0.125  # io1 cost
+        returned_ids = {v["VolumeId"] for v in volumes}
+        assert returned_ids == {"vol-12345", "vol-67890"}
+        for volume in volumes:
+            assert "estimated_monthly_cost" not in volume
 
     def test_find_unused_elastic_ips(self, optimizer):
         """Test finding unused Elastic IPs."""
@@ -348,6 +343,8 @@ class TestCostOptimizer:
         assert len(idle_instances) == 1
         assert idle_instances[0]["DBInstanceIdentifier"] == "idle-db"
         assert idle_instances[0]["cpu_utilization"] == 2.0
+        # No fabricated cost estimate is attached to idle instances.
+        assert "estimated_monthly_cost" not in idle_instances[0]
 
     def test_get_rds_cpu_utilization(self, optimizer, analysis_period):
         """Test getting RDS CPU utilization from CloudWatch."""
@@ -360,16 +357,6 @@ class TestCostOptimizer:
         expected_avg = (10.5 + 15.2 + 8.7) / 3
         assert abs(cpu_util - expected_avg) < 0.1
 
-    def test_estimate_rds_monthly_cost(self, optimizer):
-        """Test RDS monthly cost estimation."""
-        # Test known instance types
-        assert optimizer._estimate_rds_monthly_cost("db.t3.micro") == 15
-        assert optimizer._estimate_rds_monthly_cost("db.m5.large") == 150
-        assert optimizer._estimate_rds_monthly_cost("db.r5.xlarge") == 360
-
-        # Test unknown instance type (should return default)
-        assert optimizer._estimate_rds_monthly_cost("db.unknown.type") == 100
-
     def test_analyze_anomaly_root_cause(self, optimizer):
         """Test anomaly root cause analysis."""
         # Test service-level anomaly
@@ -378,22 +365,6 @@ class TestCostOptimizer:
         root_cause = optimizer._analyze_anomaly_root_cause(anomaly)
         assert "Service-level cost spike" in root_cause
         assert "Highly unusual spending pattern" in root_cause
-
-    def test_get_actual_spending_for_budget(self, optimizer, analysis_period):
-        """Test getting actual spending for budget period."""
-        optimizer.ce_client.get_cost_and_usage.return_value = {
-            "ResultsByTime": [
-                {"Total": {"BlendedCost": {"Amount": "500.00"}}},
-                {"Total": {"BlendedCost": {"Amount": "600.00"}}},
-            ]
-        }
-
-        budget = {"BudgetName": "test-budget"}
-        actual_spending = optimizer._get_actual_spending_for_budget(
-            budget, analysis_period
-        )
-
-        assert actual_spending == Decimal("1100.00")  # 500 + 600
 
     def test_error_handling_in_analysis_methods(self, optimizer, analysis_period):
         """Test that analysis methods handle errors gracefully."""
@@ -417,7 +388,6 @@ class TestCostOptimizer:
         optimizer._get_reserved_instance_recommendations = Mock(return_value=[])
         optimizer._get_savings_plan_recommendations = Mock(return_value=[])
         optimizer._detect_cost_anomalies = Mock(return_value=[])
-        optimizer._analyze_budget_variances = Mock(return_value=[])
 
         report = optimizer.generate_optimization_report()  # No period provided
 

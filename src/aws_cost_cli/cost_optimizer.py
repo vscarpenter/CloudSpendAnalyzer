@@ -100,7 +100,6 @@ class CostOptimizer:
 
         # Initialize AWS clients
         self.ce_client = self.session.client("ce", region_name=region)
-        self.budgets_client = self.session.client("budgets", region_name=region)
         self.ec2_client = self.session.client("ec2", region_name=region)
         self.rds_client = self.session.client("rds", region_name=region)
         self.cloudwatch_client = self.session.client("cloudwatch", region_name=region)
@@ -117,7 +116,11 @@ class CostOptimizer:
 
         recommendations = []
         anomalies = []
-        budget_variances = []
+        # Budget variance analysis is intentionally omitted: computing it
+        # correctly requires honoring each budget's filters, cost types, and
+        # time unit, which the AWS Budgets/Cost Explorer APIs do not expose in a
+        # way we can reconcile reliably. See removal note in the changelog.
+        budget_variances: List[BudgetVariance] = []
 
         # Analyze unused resources
         unused_recommendations = self._analyze_unused_resources(analysis_period)
@@ -141,10 +144,6 @@ class CostOptimizer:
         detected_anomalies = self._detect_cost_anomalies(analysis_period)
         anomalies.extend(detected_anomalies)
 
-        # Analyze budget variances
-        budget_analysis = self._analyze_budget_variances(analysis_period)
-        budget_variances.extend(budget_analysis)
-
         # Calculate total potential savings
         total_savings = sum(
             (rec.potential_savings.amount for rec in recommendations), Decimal("0.0")
@@ -166,32 +165,37 @@ class CostOptimizer:
         recommendations = []
 
         try:
-            # Analyze unused EBS volumes
+            # Analyze unused EBS volumes. The resource is detected via the EC2
+            # API; we deliberately do not estimate savings here because doing so
+            # accurately requires live AWS pricing rather than hardcoded rates.
             unused_volumes = self._find_unused_ebs_volumes()
             for volume in unused_volumes:
+                availability_zone = volume.get("AvailabilityZone", "")
                 recommendations.append(
                     OptimizationRecommendation(
                         type=OptimizationType.UNUSED_RESOURCES,
                         severity=SeverityLevel.MEDIUM,
                         title=f"Unused EBS Volume: {volume['VolumeId']}",
                         description=f"EBS volume {volume['VolumeId']} is not attached to any instance",
-                        potential_savings=CostAmount(
-                            amount=Decimal(str(volume["estimated_monthly_cost"]))
-                        ),
+                        potential_savings=CostAmount(amount=Decimal("0")),
                         confidence_level=0.9,
                         resource_id=volume["VolumeId"],
                         service="Amazon Elastic Block Store",
-                        region=volume.get("AvailabilityZone", "").rstrip("abcdef"),
+                        region=(
+                            availability_zone[:-1] if availability_zone else None
+                        ),
                         action_required="Delete unused volume or attach to instance",
                         estimated_effort="low",
                         metadata={
                             "volume_size": volume.get("Size"),
                             "volume_type": volume.get("VolumeType"),
+                            "savings_estimated": False,
                         },
                     )
                 )
 
-            # Analyze unused Elastic IPs
+            # Analyze unused Elastic IPs. Detection is API-driven; savings are
+            # not estimated to avoid drifting from real AWS pricing.
             unused_eips = self._find_unused_elastic_ips()
             for eip in unused_eips:
                 recommendations.append(
@@ -200,18 +204,18 @@ class CostOptimizer:
                         severity=SeverityLevel.LOW,
                         title=f"Unused Elastic IP: {eip['PublicIp']}",
                         description=f"Elastic IP {eip['PublicIp']} is not associated with any instance",
-                        potential_savings=CostAmount(
-                            amount=Decimal("3.65")
-                        ),  # ~$0.005/hour * 24 * 30
+                        potential_savings=CostAmount(amount=Decimal("0")),
                         confidence_level=0.95,
                         resource_id=eip.get("AllocationId"),
                         service="Amazon EC2",
                         action_required="Release unused Elastic IP",
                         estimated_effort="low",
+                        metadata={"savings_estimated": False},
                     )
                 )
 
-            # Analyze idle RDS instances
+            # Analyze idle RDS instances. Idleness is detected from CloudWatch
+            # metrics; savings are not estimated to avoid hardcoded pricing.
             idle_rds = self._find_idle_rds_instances(period)
             for instance in idle_rds:
                 recommendations.append(
@@ -220,15 +224,16 @@ class CostOptimizer:
                         severity=SeverityLevel.HIGH,
                         title=f"Idle RDS Instance: {instance['DBInstanceIdentifier']}",
                         description=f"RDS instance {instance['DBInstanceIdentifier']} shows very low utilization",
-                        potential_savings=CostAmount(
-                            amount=Decimal(str(instance["estimated_monthly_cost"]))
-                        ),
+                        potential_savings=CostAmount(amount=Decimal("0")),
                         confidence_level=0.8,
                         resource_id=instance["DBInstanceIdentifier"],
                         service="Amazon RDS",
                         action_required="Consider stopping, downsizing, or terminating instance",
                         estimated_effort="medium",
-                        metadata={"instance_class": instance.get("DBInstanceClass")},
+                        metadata={
+                            "instance_class": instance.get("DBInstanceClass"),
+                            "savings_estimated": False,
+                        },
                     )
                 )
 
@@ -451,51 +456,6 @@ class CostOptimizer:
 
         return anomalies
 
-    def _analyze_budget_variances(self, period: TimePeriod) -> List[BudgetVariance]:
-        """Analyze budget variances."""
-        variances = []
-
-        try:
-            # Get account ID
-            sts_client = self.session.client("sts")
-            account_id = sts_client.get_caller_identity()["Account"]
-
-            # List budgets
-            response = self.budgets_client.describe_budgets(AccountId=account_id)
-
-            for budget in response.get("Budgets", []):
-                budget_name = budget["BudgetName"]
-                budgeted_amount = Decimal(budget["BudgetLimit"]["Amount"])
-
-                # Get actual spending for budget period
-                actual_spending = self._get_actual_spending_for_budget(budget, period)
-
-                variance_amount = actual_spending - budgeted_amount
-                variance_percentage = (
-                    float((variance_amount / budgeted_amount) * 100)
-                    if budgeted_amount > 0
-                    else 0
-                )
-
-                if abs(variance_percentage) > 5:  # Only report significant variances
-                    variances.append(
-                        BudgetVariance(
-                            budget_name=budget_name,
-                            budgeted_amount=CostAmount(amount=budgeted_amount),
-                            actual_amount=CostAmount(amount=actual_spending),
-                            variance_amount=CostAmount(amount=variance_amount),
-                            variance_percentage=variance_percentage,
-                            time_period=period,
-                            is_over_budget=variance_amount > 0,
-                        )
-                    )
-
-        except Exception as _e:
-            # Budgets might not be configured
-            pass
-
-        return variances
-
     def _find_unused_ebs_volumes(self) -> List[Dict[str, Any]]:
         """Find unattached EBS volumes."""
         unused_volumes = []
@@ -506,26 +466,7 @@ class CostOptimizer:
             )
 
             for volume in response.get("Volumes", []):
-                # Estimate monthly cost based on volume size and type
-                size = volume.get("Size", 0)
-                volume_type = volume.get("VolumeType", "gp2")
-
-                # Rough cost estimates per GB per month
-                cost_per_gb = {
-                    "gp2": 0.10,
-                    "gp3": 0.08,
-                    "io1": 0.125,
-                    "io2": 0.125,
-                    "st1": 0.045,
-                    "sc1": 0.025,
-                    "standard": 0.05,
-                }
-
-                monthly_cost = size * cost_per_gb.get(volume_type, 0.10)
-
-                volume_info = volume.copy()
-                volume_info["estimated_monthly_cost"] = monthly_cost
-                unused_volumes.append(volume_info)
+                unused_volumes.append(volume.copy())
 
         except Exception:
             pass
@@ -563,14 +504,9 @@ class CostOptimizer:
                     )
 
                     if cpu_utilization < 5.0:  # Less than 5% average CPU
-                        # Estimate monthly cost (rough approximation)
-                        instance_class = instance.get("DBInstanceClass", "")
-                        estimated_cost = self._estimate_rds_monthly_cost(instance_class)
-
                         instance_info = {
                             "DBInstanceIdentifier": instance["DBInstanceIdentifier"],
-                            "DBInstanceClass": instance_class,
-                            "estimated_monthly_cost": estimated_cost,
+                            "DBInstanceClass": instance.get("DBInstanceClass", ""),
                             "cpu_utilization": cpu_utilization,
                         }
                         idle_instances.append(instance_info)
@@ -603,26 +539,6 @@ class CostOptimizer:
 
         return 100.0  # Assume high utilization if we can't get metrics
 
-    def _estimate_rds_monthly_cost(self, instance_class: str) -> float:
-        """Estimate monthly cost for RDS instance class."""
-        # Rough cost estimates for common instance types (per month)
-        cost_estimates = {
-            "db.t3.micro": 15,
-            "db.t3.small": 30,
-            "db.t3.medium": 60,
-            "db.t3.large": 120,
-            "db.t3.xlarge": 240,
-            "db.t3.2xlarge": 480,
-            "db.m5.large": 150,
-            "db.m5.xlarge": 300,
-            "db.m5.2xlarge": 600,
-            "db.r5.large": 180,
-            "db.r5.xlarge": 360,
-            "db.r5.2xlarge": 720,
-        }
-
-        return cost_estimates.get(instance_class, 100)  # Default estimate
-
     def _analyze_anomaly_root_cause(self, anomaly: Dict[str, Any]) -> str:
         """Analyze potential root cause of cost anomaly."""
         root_causes = []
@@ -638,29 +554,3 @@ class CostOptimizer:
             root_causes.append("Unknown cause - manual investigation recommended")
 
         return "; ".join(root_causes)
-
-    def _get_actual_spending_for_budget(
-        self, budget: Dict[str, Any], period: TimePeriod
-    ) -> Decimal:
-        """Get actual spending for a budget period."""
-        try:
-            # This is a simplified implementation
-            # In practice, you'd need to match the budget's filters and time period
-            response = self.ce_client.get_cost_and_usage(
-                TimePeriod={
-                    "Start": period.start.strftime("%Y-%m-%d"),
-                    "End": period.end.strftime("%Y-%m-%d"),
-                },
-                Granularity="MONTHLY",
-                Metrics=["BlendedCost"],
-            )
-
-            total_cost = Decimal("0")
-            for result in response.get("ResultsByTime", []):
-                for metric_name, metric_data in result.get("Total", {}).items():
-                    total_cost += Decimal(metric_data["Amount"])
-
-            return total_cost
-
-        except Exception:
-            return Decimal("0")
