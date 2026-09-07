@@ -36,11 +36,8 @@ class QueryContext:
     debug: bool = False
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
-    # Performance optimization options
-    enable_parallel: bool = True
-    enable_compression: bool = True
-    max_chunk_days: int = 90
-    show_performance_metrics: bool = False
+    # LLM provider override
+    llm_provider_override: Optional[str] = None
 
 
 @dataclass
@@ -55,11 +52,7 @@ class QueryResult:
     processing_time_ms: Optional[float] = None
     cache_hit: bool = False
     llm_used: bool = False
-    # Performance metrics
-    performance_metrics: Optional[Dict[str, Any]] = None
     api_calls_made: int = 0
-    parallel_requests: int = 1
-    compression_stats: Optional[Dict[str, Any]] = None
     fallback_used: bool = False
 
 
@@ -103,14 +96,104 @@ class QueryPipeline:
         # Initialize cache manager
         self.cache_manager = CacheManager(default_ttl=self.config.cache_ttl)
 
-        # Initialize query parser
-        self.query_parser = QueryParser(self.config.llm_config)
+        # Initialize query parser with full config for fallback strategy
+        from dataclasses import asdict
+
+        config_dict = asdict(self.config)
+        self.query_parser = QueryParser(self.config.llm_config, config_dict)
 
         # AWS client will be initialized per query with profile
         self.aws_client = None
 
         # Response generator will be initialized per query with LLM provider
         self.response_generator = None
+
+    def _get_query_parser_for_context(self, context: QueryContext, result: QueryResult):
+        """Get query parser, potentially with provider override."""
+        from .provider_factory import ProviderFactory
+
+        if context.llm_provider_override:
+            # Validate the provider override
+            if not ProviderFactory.is_provider_supported(context.llm_provider_override):
+                valid_providers = ProviderFactory.get_all_provider_names()
+                raise ValidationError(
+                    f"Invalid LLM provider '{context.llm_provider_override}'. "
+                    f"Valid providers are: {', '.join(valid_providers)}"
+                )
+
+            # Check if the overridden provider is configured
+            provider_configured = self._is_provider_configured(
+                context.llm_provider_override, self.config.llm_config
+            )
+            if not provider_configured:
+                error_msg = self._get_provider_configuration_error(
+                    context.llm_provider_override
+                )
+                raise ValidationError(error_msg)
+
+            # Create temporary config with provider override
+            override_config = self.config.llm_config.copy()
+            override_config["provider"] = context.llm_provider_override
+
+            # Create temporary query parser with override
+            from .query_processor import QueryParser
+
+            return QueryParser(override_config)
+        else:
+            # Use default query parser
+            return self.query_parser
+
+    def _is_provider_configured(self, provider: str, config: Dict[str, Any]) -> bool:
+        """Check if a provider is properly configured."""
+        from .provider_factory import ProviderFactory
+
+        try:
+            provider_instance = ProviderFactory.create_provider(provider, config)
+            return provider_instance.is_available()
+        except Exception:
+            return False
+
+    def _get_provider_configuration_error(self, provider: str) -> str:
+        """Get helpful error message for unconfigured provider."""
+        from .provider_factory import ProviderFactory
+
+        # Get detailed status from ProviderFactory
+        status = ProviderFactory.get_provider_configuration_status(
+            self.config.llm_config
+        )
+        provider_status = status.get(provider, {})
+
+        if provider_status.get("error"):
+            return provider_status["error"]
+
+        # Fallback to generic messages
+        if provider == "openai":
+            return (
+                f"OpenAI provider is not configured. Please set OPENAI_API_KEY environment variable "
+                f"or run: aws-cost-cli configure --provider openai --api-key YOUR_API_KEY"
+            )
+        elif provider == "anthropic":
+            return (
+                f"Anthropic provider is not configured. Please set ANTHROPIC_API_KEY environment variable "
+                f"or run: aws-cost-cli configure --provider anthropic --api-key YOUR_API_KEY"
+            )
+        elif provider == "gemini":
+            return (
+                f"Gemini provider is not configured. Please set GEMINI_API_KEY environment variable "
+                f"or run: aws-cost-cli configure --provider gemini --api-key YOUR_API_KEY"
+            )
+        elif provider == "bedrock":
+            return (
+                f"Bedrock provider requires AWS credentials. Please configure AWS credentials "
+                f"or run: aws-cost-cli configure --provider bedrock"
+            )
+        elif provider == "ollama":
+            return (
+                f"Ollama provider requires local Ollama server. Please install and start Ollama "
+                f"or run: aws-cost-cli configure --provider ollama"
+            )
+        else:
+            return f"Provider '{provider}' is not configured."
 
     def process_query(self, context: QueryContext) -> QueryResult:
         """
@@ -213,43 +296,72 @@ class QueryPipeline:
     def _parse_query(
         self, context: QueryContext, result: QueryResult
     ) -> QueryParameters:
-        """Parse natural language query."""
+        """Parse the natural language query.
+
+        Tries the configured LLM provider(s) first. If the parser surfaces an
+        ``LLMProviderError`` (e.g. no provider is reachable), fall back to
+        deterministic pattern matching and record that on the result so callers
+        can tell how the query was parsed (``fallback_used`` / ``parsing_method``).
+        """
         self.logger.debug(f"Parsing query: {context.original_query}")
+
+        # Validate any provider override before attempting to parse.
+        if context.llm_provider_override:
+            from .provider_factory import ProviderFactory
+
+            if not ProviderFactory.is_provider_supported(
+                context.llm_provider_override
+            ):
+                valid_providers = ProviderFactory.get_all_provider_names()
+                raise ValidationError(
+                    f"Invalid LLM provider '{context.llm_provider_override}'. "
+                    f"Valid providers are: {', '.join(valid_providers)}"
+                )
+
+            if not self._is_provider_configured(
+                context.llm_provider_override, self.config.llm_config
+            ):
+                raise ValidationError(
+                    self._get_provider_configuration_error(
+                        context.llm_provider_override
+                    )
+                )
 
         try:
             query_params = self.query_parser.parse_query(context.original_query)
+
             result.llm_used = True
             result.metadata["parsing_method"] = "llm"
+            if context.llm_provider_override:
+                result.metadata["provider_override"] = context.llm_provider_override
+
             return query_params
 
-        except LLMProviderError as e:
-            self.logger.warning(f"LLM parsing failed, using fallback: {e.message}")
+        except LLMProviderError as llm_error:
+            # LLM is unavailable -- fall back to pattern matching so the query
+            # still succeeds, and surface that fact on the result.
+            self.logger.warning(
+                f"LLM parsing failed, using pattern matching fallback: {llm_error}"
+            )
 
-            # Try fallback parser
-            try:
-                from .query_processor import FallbackParser
+            fallback_result = self.query_parser.fallback_parser.parse_query(
+                context.original_query
+            )
+            query_params = self.query_parser._convert_to_query_parameters(
+                fallback_result
+            )
 
-                fallback = FallbackParser()
-                parsed_result = fallback.parse_query(context.original_query)
-                query_params = self.query_parser._convert_to_query_parameters(
-                    parsed_result
-                )
+            result.llm_used = False
+            result.fallback_used = True
+            result.metadata["parsing_method"] = "fallback"
+            result.metadata["llm_error"] = str(llm_error)
+            if context.llm_provider_override:
+                result.metadata["provider_override"] = context.llm_provider_override
 
-                result.fallback_used = True
-                result.metadata["parsing_method"] = "fallback"
-                result.metadata["llm_error"] = e.message
+            return query_params
 
-                return query_params
-
-            except Exception as fallback_error:
-                raise QueryParsingError(
-                    f"Both LLM and fallback parsing failed. LLM error: {e.message}, "
-                    f"Fallback error: {str(fallback_error)}",
-                    original_query=context.original_query,
-                )
-
-        except (QueryParsingError, ValidationError) as e:
-            raise e
+        except (QueryParsingError, ValidationError):
+            raise
 
         except Exception as e:
             raise QueryParsingError(
@@ -271,64 +383,18 @@ class QueryPipeline:
     def _fetch_cost_data(
         self, query_params: QueryParameters, context: QueryContext, result: QueryResult
     ) -> CostData:
-        """Fetch cost data from AWS with caching and performance optimizations."""
-        self.logger.debug("Fetching cost data with performance optimizations")
+        """Fetch cost data from AWS with caching."""
+        self.logger.debug("Fetching cost data")
 
         # Check if we should use cache
         use_cache = not context.fresh_data
 
-        # Use performance optimizations if enabled
-        if context.enable_parallel or context.enable_compression:
-            try:
-                # Use performance-optimized client
-                cost_data = (
-                    self.aws_client.get_cost_and_usage_with_performance_optimization(
-                        params=query_params,
-                        use_cache=use_cache,
-                        enable_parallel=context.enable_parallel,
-                        enable_compression=context.enable_compression,
-                        max_chunk_days=context.max_chunk_days,
-                    )
-                )
-
-                # Get performance metrics if available
-                perf_client = self.aws_client.create_performance_optimized_client(
-                    enable_parallel=context.enable_parallel,
-                    enable_compression=context.enable_compression,
-                    enable_monitoring=True,
-                )
-
-                if hasattr(perf_client, "monitor"):
-                    perf_summary = perf_client.get_performance_summary(hours=1)
-                    result.performance_metrics = perf_summary
-
-                if hasattr(perf_client, "compressed_cache"):
-                    compression_stats = (
-                        perf_client.compressed_cache.get_compression_stats()
-                    )
-                    result.compression_stats = compression_stats
-
-                result.metadata["performance_optimizations_used"] = True
-                result.metadata["parallel_enabled"] = context.enable_parallel
-                result.metadata["compression_enabled"] = context.enable_compression
-
-                self.logger.debug("Used performance-optimized data fetching")
-                return cost_data
-
-            except Exception as e:
-                self.logger.warning(
-                    f"Performance optimization failed, falling back to standard method: {e}"
-                )
-                # Fall back to standard method
-
-        # Standard data fetching (fallback or when optimizations disabled)
         # Check cache first if enabled
         if use_cache:
             try:
-                cache_key = self.cache_manager.generate_cache_key(
+                cached_data = self.cache_manager.get_cached_data(
                     query_params, context.profile or "default"
                 )
-                cached_data = self.cache_manager.get_cached_data(cache_key)
                 if cached_data:
                     result.cache_hit = True
                     result.metadata["data_source"] = "cache"
@@ -337,17 +403,12 @@ class QueryPipeline:
             except CacheError as e:
                 self.logger.warning(f"Cache error: {e.message}")
 
-        # Fetch from AWS (with advanced features if requested)
+        # Fetch from AWS
         try:
-            # Check if advanced features are requested
-            if query_params.trend_analysis or query_params.include_forecast:
-                cost_data = self.aws_client.get_advanced_cost_data(query_params)
-                result.metadata["advanced_features_used"] = True
-            else:
-                cost_data = self.aws_client.get_cost_and_usage(
-                    query_params, use_cache=use_cache
-                )
-                result.api_calls_made = 1
+            cost_data = self.aws_client.get_cost_and_usage(
+                query_params, use_cache=use_cache
+            )
+            result.api_calls_made = 1
 
             result.metadata["data_source"] = "aws_api"
             self.logger.debug("Fetched data from AWS API")
@@ -372,6 +433,16 @@ class QueryPipeline:
     ) -> str:
         """Generate formatted response."""
         self.logger.debug(f"Generating response in format: {context.output_format}")
+
+        # Empty results mean AWS returned no cost data for this period. Surface
+        # that explicitly instead of letting a formatter render a misleading
+        # "$0.00" total that looks like a real (but zero) charge. Use getattr so
+        # a non-CostData payload (e.g. a raw dict in tests) is left to the
+        # formatter unchanged rather than being misread as "no data".
+        results = getattr(cost_data, "results", None)
+        if results is not None and len(results) == 0:
+            result.metadata["no_data"] = True
+            return self._format_no_data_message(cost_data)
 
         # Initialize response generator if needed
         if not self.response_generator:
@@ -414,7 +485,9 @@ class QueryPipeline:
                     self.logger.warning(f"Failed to initialize LLM provider: {e}")
 
             self.response_generator = ResponseGenerator(
-                llm_provider=llm_provider, output_format=context.output_format
+                llm_provider=llm_provider,
+                output_format=context.output_format,
+                date_formatting_config=self.config.date_formatting,
             )
 
         try:
@@ -427,6 +500,23 @@ class QueryPipeline:
 
         except Exception as e:
             raise AWSCostCLIError(f"Failed to generate response: {str(e)}")
+
+    def _format_no_data_message(self, cost_data: CostData) -> str:
+        """Build an explicit 'no cost data' message for an empty result set."""
+        period = cost_data.time_period
+        try:
+            start = period.start.strftime("%Y-%m-%d")
+            end = period.end.strftime("%Y-%m-%d")
+            period_text = f" for {start} to {end}"
+        except Exception:
+            period_text = ""
+
+        return (
+            f"No cost data available{period_text}. "
+            "AWS Cost Explorer returned no results for this query. This usually "
+            "means there were no charges in this period, the data is not yet "
+            "available, or the service/filter did not match any usage."
+        )
 
     def handle_ambiguous_query(self, context: QueryContext) -> List[str]:
         """

@@ -1,0 +1,9 @@
+# Minimal dependencies for AWS Cost CLI v2.0
+
+# Core dependencies only
+boto3>=1.26.0        # AWS SDK
+click>=8.0.0         # CLI framework
+requests>=2.28.0     # HTTP client for Ollama
+
+# Optional: OpenAI support (install if using OpenAI)
+# openai>=1.0.0

@@ -24,15 +24,6 @@ class DateRangeType(Enum):
     CUSTOM = "CUSTOM"
 
 
-class TrendAnalysisType(Enum):
-    """Types of trend analysis."""
-
-    PERIOD_OVER_PERIOD = "PERIOD_OVER_PERIOD"
-    YEAR_OVER_YEAR = "YEAR_OVER_YEAR"
-    MONTH_OVER_MONTH = "MONTH_OVER_MONTH"
-    QUARTER_OVER_QUARTER = "QUARTER_OVER_QUARTER"
-
-
 class MetricType(Enum):
     """Cost metric types."""
 
@@ -40,6 +31,14 @@ class MetricType(Enum):
     UNBLENDED_COST = "UnblendedCost"
     NET_UNBLENDED_COST = "NetUnblendedCost"
     USAGE_QUANTITY = "UsageQuantity"
+
+
+class DateFormatStyle(Enum):
+    """Date formatting style options."""
+
+    SMART = "smart"      # Automatically choose the most appropriate format
+    VERBOSE = "verbose"  # Always include full context (e.g., "January 1-31, 2025")
+    COMPACT = "compact"  # Use shortest reasonable format (e.g., "Jan 2025")
 
 
 @dataclass
@@ -62,10 +61,6 @@ class QueryParameters:
     # Advanced query features
     date_range_type: Optional[DateRangeType] = None
     fiscal_year_start_month: int = 1  # January by default
-    trend_analysis: Optional[TrendAnalysisType] = None
-    comparison_period: Optional[TimePeriod] = None
-    include_forecast: bool = False
-    forecast_months: int = 3
     cost_allocation_tags: Optional[List[str]] = None
 
     def __post_init__(self):
@@ -80,6 +75,10 @@ class CostAmount:
     amount: Decimal
     unit: str = "USD"
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-friendly mapping (amount as float)."""
+        return {"amount": float(self.amount), "currency": self.unit}
+
 
 @dataclass
 class Group:
@@ -87,6 +86,15 @@ class Group:
 
     keys: List[str]
     metrics: Dict[str, CostAmount]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-friendly mapping."""
+        return {
+            "keys": self.keys,
+            "metrics": {
+                name: amount.to_dict() for name, amount in self.metrics.items()
+            },
+        }
 
 
 @dataclass
@@ -98,27 +106,17 @@ class CostResult:
     groups: List[Group]
     estimated: bool = False
 
-
-@dataclass
-class TrendData:
-    """Trend analysis data for period-over-period comparisons."""
-
-    current_period: CostAmount
-    comparison_period: CostAmount
-    change_amount: CostAmount
-    change_percentage: float
-    trend_direction: str  # "up", "down", "stable"
-
-
-@dataclass
-class ForecastData:
-    """Cost forecast data."""
-
-    forecasted_amount: CostAmount
-    confidence_interval_lower: CostAmount
-    confidence_interval_upper: CostAmount
-    forecast_period: TimePeriod
-    prediction_accuracy: Optional[float] = None
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-friendly mapping."""
+        return {
+            "period": {
+                "start": self.time_period.start.isoformat(),
+                "end": self.time_period.end.isoformat(),
+            },
+            "total": self.total.to_dict(),
+            "estimated": self.estimated,
+            "groups": [group.to_dict() for group in self.groups],
+        }
 
 
 @dataclass
@@ -130,26 +128,68 @@ class CostData:
     total_cost: CostAmount
     currency: str = "USD"
     group_definitions: List[str] = None
-    # Advanced features
-    trend_data: Optional[TrendData] = None
-    forecast_data: Optional[List[ForecastData]] = None
 
     def __post_init__(self):
         if self.group_definitions is None:
             self.group_definitions = []
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the cost-data portion of a query response to a mapping.
+
+        This produces the ``total_cost``/``time_period``/``results`` structure
+        used by the CLI's JSON output. The outer envelope (``query``,
+        ``success``, ``metadata``) is assembled by the caller.
+        """
+        return {
+            "total_cost": self.total_cost.to_dict(),
+            "time_period": {
+                "start": self.time_period.start.isoformat(),
+                "end": self.time_period.end.isoformat(),
+            },
+            "results": [result.to_dict() for result in self.results],
+        }
+
+
+@dataclass
+class DateFormattingConfig:
+    """Date formatting configuration options."""
+
+    enabled: bool = True
+    format_style: DateFormatStyle = DateFormatStyle.SMART
+    fiscal_year_start_month: int = 1  # January by default
+    locale: str = "en_US"
+    fallback_to_iso: bool = True
+
+    def __post_init__(self):
+        # Validate fiscal year start month
+        if not 1 <= self.fiscal_year_start_month <= 12:
+            raise ValueError(f"fiscal_year_start_month must be between 1 and 12, got {self.fiscal_year_start_month}")
+        
+        # Convert string format_style to enum if needed
+        if isinstance(self.format_style, str):
+            try:
+                self.format_style = DateFormatStyle(self.format_style.lower())
+            except ValueError:
+                self.format_style = DateFormatStyle.SMART
 
 
 @dataclass
 class Config:
     """Application configuration."""
 
-    llm_provider: str = "openai"
+    llm_provider: str = "ollama"
     llm_config: Dict[str, Any] = None
     default_profile: Optional[str] = None
     cache_ttl: int = 3600  # 1 hour in seconds
     output_format: str = "simple"
     default_currency: str = "USD"
+    fallback_providers: List[str] = None
+    date_formatting: DateFormattingConfig = None
 
     def __post_init__(self):
         if self.llm_config is None:
             self.llm_config = {}
+        if self.fallback_providers is None:
+            self.fallback_providers = ["ollama", "openai", "anthropic", "gemini"]
+        if self.date_formatting is None:
+            self.date_formatting = DateFormattingConfig()

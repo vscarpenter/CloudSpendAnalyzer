@@ -13,6 +13,7 @@ from src.aws_cost_cli.query_processor import (
     AnthropicProvider,
     BedrockProvider,
     OllamaProvider,
+    GeminiProvider,
 )
 from src.aws_cost_cli.models import (
     QueryParameters,
@@ -494,35 +495,264 @@ class TestOllamaProvider:
             self.provider.parse_query("test query")
 
 
+class TestGeminiProvider:
+    """Test cases for GeminiProvider class."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.provider = GeminiProvider(api_key="test-key", model="gemini-1.5-flash")
+
+    def test_initialization_with_defaults(self):
+        """Test GeminiProvider initialization with default values."""
+        provider = GeminiProvider(api_key="test-key")
+        assert provider.api_key == "test-key"
+        assert provider.model == "gemini-1.5-flash"
+        assert provider._client is None
+
+    def test_initialization_with_custom_model(self):
+        """Test GeminiProvider initialization with custom model."""
+        provider = GeminiProvider(api_key="test-key", model="gemini-1.5-pro")
+        assert provider.api_key == "test-key"
+        assert provider.model == "gemini-1.5-pro"
+
+    def test_is_available_with_key(self):
+        """Test availability check with API key."""
+        with patch("google.generativeai.configure"), \
+             patch("google.generativeai.GenerativeModel"):
+            assert self.provider.is_available() is True
+
+    def test_is_available_without_key(self):
+        """Test availability check without API key."""
+        provider = GeminiProvider(api_key="")
+        with patch("google.generativeai.configure"), \
+             patch("google.generativeai.GenerativeModel"):
+            assert provider.is_available() is False
+
+    def test_is_available_import_error(self):
+        """Test availability check when google-generativeai package is not installed."""
+        with patch("google.generativeai.configure", side_effect=ImportError("No module named 'google.generativeai'")):
+            assert self.provider.is_available() is False
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_get_client_success(self, mock_model, mock_configure):
+        """Test successful client creation."""
+        mock_client = Mock()
+        mock_model.return_value = mock_client
+        
+        client = self.provider._get_client()
+        
+        mock_configure.assert_called_once_with(api_key="test-key")
+        mock_model.assert_called_once_with("gemini-1.5-flash")
+        assert client == mock_client
+        assert self.provider._client == mock_client
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_get_client_import_error(self, mock_model, mock_configure):
+        """Test client creation when package is not installed."""
+        mock_configure.side_effect = ImportError("No module named 'google.generativeai'")
+        
+        with pytest.raises(ImportError, match="google-generativeai package is required"):
+            self.provider._get_client()
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_success(self, mock_model, mock_configure):
+        """Test successful query parsing."""
+        # Mock Gemini response
+        mock_response = Mock()
+        mock_response.text = """
+        {
+            "service": "EC2",
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+            "granularity": "MONTHLY",
+            "metrics": ["BlendedCost"],
+            "group_by": ["SERVICE"]
+        }
+        """
+
+        mock_client = Mock()
+        mock_client.generate_content.return_value = mock_response
+        mock_model.return_value = mock_client
+
+        result = self.provider.parse_query("EC2 costs last month")
+
+        assert result["service"] == "EC2"
+        assert result["start_date"] == "2024-01-01"
+        assert result["granularity"] == "MONTHLY"
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_api_error(self, mock_model, mock_configure):
+        """Test handling of Gemini API errors."""
+        mock_client = Mock()
+        mock_client.generate_content.side_effect = Exception("API Error")
+        mock_model.return_value = mock_client
+
+        with pytest.raises(LLMProviderError, match="Gemini API error"):
+            self.provider.parse_query("test query")
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_authentication_error(self, mock_model, mock_configure):
+        """Test handling of authentication errors."""
+        mock_client = Mock()
+        mock_client.generate_content.side_effect = Exception("API key invalid")
+        mock_model.return_value = mock_client
+
+        with pytest.raises(LLMProviderError, match="Invalid Gemini API key"):
+            self.provider.parse_query("test query")
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_quota_error(self, mock_model, mock_configure):
+        """Test handling of quota exceeded errors."""
+        mock_client = Mock()
+        mock_client.generate_content.side_effect = Exception("quota exceeded")
+        mock_model.return_value = mock_client
+
+        with pytest.raises(LLMProviderError, match="Gemini API quota exceeded"):
+            self.provider.parse_query("test query")
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_network_error(self, mock_model, mock_configure):
+        """Test handling of network errors."""
+        from src.aws_cost_cli.exceptions import NetworkError
+        
+        mock_client = Mock()
+        mock_client.generate_content.side_effect = Exception("network error")
+        mock_model.return_value = mock_client
+
+        with pytest.raises(NetworkError, match="Network error connecting to Gemini"):
+            self.provider.parse_query("test query")
+
+    def test_parse_llm_response_valid_json(self):
+        """Test parsing valid JSON response."""
+        content = '{"service": "EC2", "granularity": "MONTHLY"}'
+        result = self.provider._parse_llm_response(content)
+
+        assert result["service"] == "EC2"
+        assert result["granularity"] == "MONTHLY"
+
+    def test_parse_llm_response_json_in_text(self):
+        """Test parsing JSON embedded in text."""
+        content = 'Here is the result: {"service": "S3", "granularity": "DAILY"} as requested.'
+        result = self.provider._parse_llm_response(content)
+
+        assert result["service"] == "S3"
+        assert result["granularity"] == "DAILY"
+
+    def test_parse_llm_response_invalid_json(self):
+        """Test handling of invalid JSON response."""
+        content = "This is not valid JSON"
+
+        with pytest.raises(
+            QueryParsingError, match="Could not parse LLM response as JSON"
+        ):
+            self.provider._parse_llm_response(content)
+
+    def test_parse_llm_response_empty_content(self):
+        """Test handling of empty response content."""
+        content = ""
+
+        with pytest.raises(
+            QueryParsingError, match="Could not parse LLM response as JSON"
+        ):
+            self.provider._parse_llm_response(content)
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_with_system_prompt(self, mock_model, mock_configure):
+        """Test that query parsing uses the correct system prompt."""
+        mock_response = Mock()
+        mock_response.text = '{"service": "Lambda", "granularity": "DAILY"}'
+
+        mock_client = Mock()
+        mock_client.generate_content.return_value = mock_response
+        mock_model.return_value = mock_client
+
+        self.provider.parse_query("Lambda costs daily")
+
+        # Verify that generate_content was called with the correct prompt structure
+        mock_client.generate_content.assert_called_once()
+        call_args = mock_client.generate_content.call_args[0][0]
+        
+        # The prompt should contain the system instructions and the user query
+        assert "You are an AWS cost analysis assistant" in call_args
+        assert "Lambda costs daily" in call_args
+
+    @patch("google.generativeai.configure")
+    @patch("google.generativeai.GenerativeModel")
+    def test_parse_query_response_normalization(self, mock_model, mock_configure):
+        """Test that responses are properly normalized."""
+        # Test with response that has extra whitespace and formatting
+        mock_response = Mock()
+        mock_response.text = """
+        
+        Here's the analysis:
+        
+        {
+            "service": "RDS",
+            "start_date": "2024-02-01",
+            "end_date": "2024-02-29",
+            "granularity": "MONTHLY"
+        }
+        
+        Hope this helps!
+        """
+
+        mock_client = Mock()
+        mock_client.generate_content.return_value = mock_response
+        mock_model.return_value = mock_client
+
+        result = self.provider.parse_query("RDS costs in February")
+
+        assert result["service"] == "RDS"
+        assert result["start_date"] == "2024-02-01"
+        assert result["end_date"] == "2024-02-29"
+        assert result["granularity"] == "MONTHLY"
+
+
 class TestQueryParser:
     """Test cases for QueryParser class."""
 
     def test_init_openai_provider(self):
-        """Test initialization with OpenAI provider."""
+        """Test that an OpenAI provider is initialized from configuration.
+
+        Providers are created via ProviderFactory rather than a flat-config
+        constructor, so we assert on the initialized provider instance.
+        """
         config = {"provider": "openai", "api_key": "test-key", "model": "gpt-4"}
 
-        with patch("src.aws_cost_cli.query_processor.OpenAIProvider") as mock_provider:
-            parser = QueryParser(config)
-            mock_provider.assert_called_once_with("test-key", "gpt-4")
+        parser = QueryParser(config)
+
+        assert "openai" in parser._providers
+        provider = parser._providers["openai"]
+        assert isinstance(provider, OpenAIProvider)
+        assert provider.api_key == "test-key"
+        assert provider.model == "gpt-4"
 
     def test_init_anthropic_provider(self):
-        """Test initialization with Anthropic provider."""
+        """Test that an Anthropic provider is initialized from configuration."""
         config = {
             "provider": "anthropic",
             "api_key": "test-key",
             "model": "claude-3-sonnet-20240229",
         }
 
-        with patch(
-            "src.aws_cost_cli.query_processor.AnthropicProvider"
-        ) as mock_provider:
-            parser = QueryParser(config)
-            mock_provider.assert_called_once_with(
-                "test-key", "claude-3-sonnet-20240229"
-            )
+        parser = QueryParser(config)
+
+        assert "anthropic" in parser._providers
+        provider = parser._providers["anthropic"]
+        assert isinstance(provider, AnthropicProvider)
+        assert provider.api_key == "test-key"
+        assert provider.model == "claude-3-sonnet-20240229"
 
     def test_init_bedrock_provider(self):
-        """Test initialization with Bedrock provider."""
+        """Test that a Bedrock provider is initialized from configuration."""
         config = {
             "provider": "bedrock",
             "model": "anthropic.claude-3-haiku-20240307-v1:0",
@@ -530,42 +760,53 @@ class TestQueryParser:
             "profile": "production",
         }
 
-        with patch("src.aws_cost_cli.query_processor.BedrockProvider") as mock_provider:
-            parser = QueryParser(config)
-            mock_provider.assert_called_once_with(
-                "anthropic.claude-3-haiku-20240307-v1:0", "us-west-2", "production"
-            )
+        parser = QueryParser(config)
+
+        assert "bedrock" in parser._providers
+        provider = parser._providers["bedrock"]
+        assert isinstance(provider, BedrockProvider)
+        assert provider.model == "anthropic.claude-3-haiku-20240307-v1:0"
+        assert provider.region == "us-west-2"
+        assert provider.profile == "production"
 
     def test_init_bedrock_provider_defaults(self):
-        """Test initialization with Bedrock provider using defaults."""
+        """Test that a Bedrock provider uses default model/region when unspecified."""
         config = {"provider": "bedrock"}
 
-        with patch("src.aws_cost_cli.query_processor.BedrockProvider") as mock_provider:
-            parser = QueryParser(config)
-            mock_provider.assert_called_once_with(
-                "anthropic.claude-3-haiku-20240307-v1:0", "us-east-1", None
-            )
+        parser = QueryParser(config)
+
+        assert "bedrock" in parser._providers
+        provider = parser._providers["bedrock"]
+        assert isinstance(provider, BedrockProvider)
+        assert provider.model == "anthropic.claude-3-haiku-20240307-v1:0"
+        assert provider.region == "us-east-1"
+        assert provider.profile is None
 
     def test_init_ollama_provider(self):
-        """Test initialization with Ollama provider."""
+        """Test that an Ollama provider is initialized from configuration."""
         config = {
             "provider": "ollama",
             "model": "llama2",
             "base_url": "http://localhost:11434",
         }
 
-        with patch("src.aws_cost_cli.query_processor.OllamaProvider") as mock_provider:
-            parser = QueryParser(config)
-            mock_provider.assert_called_once_with("llama2", "http://localhost:11434")
+        parser = QueryParser(config)
+
+        assert "ollama" in parser._providers
+        provider = parser._providers["ollama"]
+        assert isinstance(provider, OllamaProvider)
+        assert provider.model == "llama2"
+        assert provider.base_url == "http://localhost:11434"
 
     def test_parse_query_with_llm_success(self):
         """Test successful query parsing with LLM provider."""
         config = {"provider": "openai", "api_key": "test-key"}
 
-        # Mock LLM provider
+        # Mock LLM provider. The parser invokes parse_query_with_monitoring,
+        # so configure the return value on that (the real call boundary).
         mock_provider = Mock()
         mock_provider.is_available.return_value = True
-        mock_provider.parse_query.return_value = {
+        mock_provider.parse_query_with_monitoring.return_value = {
             "service": "EC2",
             "start_date": "2024-01-01",
             "end_date": "2024-01-31",
@@ -574,12 +815,9 @@ class TestQueryParser:
             "group_by": ["SERVICE"],
         }
 
-        with patch(
-            "src.aws_cost_cli.query_processor.OpenAIProvider",
-            return_value=mock_provider,
-        ):
-            parser = QueryParser(config)
-            result = parser.parse_query("EC2 costs last month")
+        parser = QueryParser(config)
+        parser._providers = {"openai": mock_provider}
+        result = parser.parse_query("EC2 costs last month")
 
         assert isinstance(result, QueryParameters)
         assert result.service == "EC2"
@@ -590,17 +828,14 @@ class TestQueryParser:
         """Test fallback to pattern matching when LLM fails."""
         config = {"provider": "openai", "api_key": "test-key"}
 
-        # Mock LLM provider that fails
+        # Mock LLM provider that fails on the monitored parse call.
         mock_provider = Mock()
         mock_provider.is_available.return_value = True
-        mock_provider.parse_query.side_effect = Exception("API Error")
+        mock_provider.parse_query_with_monitoring.side_effect = Exception("API Error")
 
-        with patch(
-            "src.aws_cost_cli.query_processor.OpenAIProvider",
-            return_value=mock_provider,
-        ):
-            parser = QueryParser(config)
-            result = parser.parse_query("EC2 costs last month")
+        parser = QueryParser(config)
+        parser._providers = {"openai": mock_provider}
+        result = parser.parse_query("EC2 costs last month")
 
         assert isinstance(result, QueryParameters)
         assert result.service == "Amazon Elastic Compute Cloud - Compute"
@@ -724,14 +959,17 @@ class TestQueryParser:
         # Create parser and manually add multiple providers
         parser = QueryParser(config)
 
-        # Mock multiple providers - first fails, second succeeds
+        # Mock multiple providers - first fails, second succeeds. The parser
+        # invokes parse_query_with_monitoring, so configure that boundary.
         mock_provider1 = Mock()
         mock_provider1.is_available.return_value = True
-        mock_provider1.parse_query.side_effect = Exception("Provider 1 failed")
+        mock_provider1.parse_query_with_monitoring.side_effect = Exception(
+            "Provider 1 failed"
+        )
 
         mock_provider2 = Mock()
         mock_provider2.is_available.return_value = True
-        mock_provider2.parse_query.return_value = {
+        mock_provider2.parse_query_with_monitoring.return_value = {
             "service": "Lambda",
             "granularity": "HOURLY",
         }
@@ -744,5 +982,5 @@ class TestQueryParser:
         assert result.granularity == TimePeriodGranularity.HOURLY
 
         # Verify both providers were tried
-        mock_provider1.parse_query.assert_called_once()
-        mock_provider2.parse_query.assert_called_once()
+        mock_provider1.parse_query_with_monitoring.assert_called_once()
+        mock_provider2.parse_query_with_monitoring.assert_called_once()

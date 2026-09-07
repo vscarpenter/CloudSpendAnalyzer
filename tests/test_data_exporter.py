@@ -13,8 +13,6 @@ import pytest
 from src.aws_cost_cli.data_exporter import (
     CSVExporter,
     JSONExporter,
-    ExcelExporter,
-    EmailReporter,
     ExportManager,
 )
 from src.aws_cost_cli.models import (
@@ -24,9 +22,8 @@ from src.aws_cost_cli.models import (
     TimePeriod,
     QueryParameters,
     Group,
-    TrendData,
-    ForecastData,
     TimePeriodGranularity,
+    DateFormattingConfig,
 )
 
 
@@ -62,34 +59,12 @@ def sample_cost_data():
         )
         results.append(result)
 
-    # Create trend data
-    trend_data = TrendData(
-        current_period=CostAmount(Decimal("300"), "USD"),
-        comparison_period=CostAmount(Decimal("250"), "USD"),
-        change_amount=CostAmount(Decimal("50"), "USD"),
-        change_percentage=20.0,
-        trend_direction="up",
-    )
-
-    # Create forecast data
-    forecast_data = [
-        ForecastData(
-            forecasted_amount=CostAmount(Decimal("320"), "USD"),
-            confidence_interval_lower=CostAmount(Decimal("300"), "USD"),
-            confidence_interval_upper=CostAmount(Decimal("340"), "USD"),
-            forecast_period=TimePeriod(datetime(2024, 2, 1), datetime(2024, 2, 29)),
-            prediction_accuracy=0.85,
-        )
-    ]
-
     return CostData(
         results=results,
         time_period=TimePeriod(start_date, end_date),
         total_cost=CostAmount(Decimal("525"), "USD"),
         currency="USD",
         group_definitions=["SERVICE"],
-        trend_data=trend_data,
-        forecast_data=forecast_data,
     )
 
 
@@ -143,6 +118,8 @@ class TestCSVExporter:
             reader = csv.reader(lines[data_start:])
             headers = next(reader)
             assert "Period Start" in headers
+            assert "Period End" in headers
+            assert "Formatted Period" in headers
             assert "Total Cost" in headers
             assert "Group Keys" in headers
 
@@ -155,10 +132,10 @@ class TestCSVExporter:
             if os.path.exists(output_path):
                 os.unlink(output_path)
 
-    def test_csv_export_with_trend_and_forecast(
+    def test_csv_export_with_formatted_dates(
         self, sample_cost_data, sample_query_params
     ):
-        """Test CSV export includes trend and forecast data."""
+        """Test CSV export includes formatted dates."""
         exporter = CSVExporter()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
@@ -170,14 +147,48 @@ class TestCSVExporter:
             with open(output_path, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            # Check for trend analysis
-            assert "# Trend Analysis" in content
-            assert "Current Period Cost:,300.0" in content
-            assert "Change Percentage:,20.0" in content
+            # Check that formatted period is in metadata
+            assert "# Period:" in content
+            # Should contain formatted date, not just raw dates
+            lines = content.split("\n")
+            period_line = [line for line in lines if line.startswith("# Period:")][0]
+            # Should not be just ISO format
+            assert (
+                "to" not in period_line
+                or "January" in period_line
+                or "2024" in period_line
+            )
 
-            # Check for forecast data
-            assert "# Forecast Data" in content
-            assert "Forecast Period Start" in content
+            # Parse CSV data to check formatted period column
+            data_start = None
+            for i, line in enumerate(lines):
+                if line.startswith("Period Start"):
+                    data_start = i
+                    break
+
+            assert data_start is not None
+
+            reader = csv.reader(lines[data_start:])
+            headers = next(reader)
+
+            # Find the formatted period column index
+            formatted_period_idx = headers.index("Formatted Period")
+
+            # Check that data rows have formatted periods
+            data_rows = list(reader)
+            data_rows = [
+                row
+                for row in data_rows
+                if row
+                and len(row) > formatted_period_idx
+                and not row[0].startswith("#")
+            ]
+
+            for row in data_rows[:3]:  # Check first few rows
+                formatted_period = row[formatted_period_idx]
+                # Should not be empty and should be human-readable
+                assert formatted_period
+                assert formatted_period != "Invalid date range"
 
         finally:
             if os.path.exists(output_path):
@@ -236,10 +247,10 @@ class TestJSONExporter:
             if os.path.exists(output_path):
                 os.unlink(output_path)
 
-    def test_json_export_with_trend_and_forecast(
+    def test_json_export_with_formatted_dates(
         self, sample_cost_data, sample_query_params
     ):
-        """Test JSON export includes trend and forecast data."""
+        """Test JSON export includes formatted dates."""
         exporter = JSONExporter()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -251,120 +262,36 @@ class TestJSONExporter:
             with open(output_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            # Check trend analysis
-            assert "trend_analysis" in data
-            trend = data["trend_analysis"]
-            assert trend["current_period"]["amount"] == 300.0
-            assert trend["change"]["percentage"] == 20.0
-            assert trend["change"]["direction"] == "up"
+            # Check metadata has formatted time period
+            assert "metadata" in data
+            assert "time_period" in data["metadata"]
+            time_period = data["metadata"]["time_period"]
+            assert "start" in time_period
+            assert "end" in time_period
+            assert "formatted" in time_period
 
-            # Check forecast data
-            assert "forecast" in data
-            assert len(data["forecast"]) == 1
-            forecast = data["forecast"][0]
-            assert forecast["forecasted_amount"]["amount"] == 320.0
-            assert forecast["prediction_accuracy"] == 0.85
+            # Formatted period should not be empty and should be human-readable
+            formatted_period = time_period["formatted"]
+            assert formatted_period
+            assert formatted_period != "Invalid date range"
+
+            # Check results have formatted time periods
+            assert "results" in data
+            for result in data["results"]:
+                assert "time_period" in result
+                result_time_period = result["time_period"]
+                assert "start" in result_time_period
+                assert "end" in result_time_period
+                assert "formatted" in result_time_period
+
+                # Formatted period should not be empty and should be human-readable
+                result_formatted = result_time_period["formatted"]
+                assert result_formatted
+                assert result_formatted != "Invalid date range"
 
         finally:
             if os.path.exists(output_path):
                 os.unlink(output_path)
-
-
-class TestExcelExporter:
-    """Test Excel export functionality."""
-
-    def test_excel_exporter_initialization(self):
-        """Test Excel exporter initialization."""
-        try:
-            exporter = ExcelExporter()
-            assert hasattr(exporter, "openpyxl")
-        except ImportError:
-            # openpyxl not available, skip test
-            pytest.skip("openpyxl not available")
-
-    def test_excel_export_dependency_error(self, sample_cost_data, sample_query_params):
-        """Test Excel export fails gracefully when openpyxl is not available."""
-        with patch(
-            "src.aws_cost_cli.data_exporter.ExcelExporter._check_dependencies"
-        ) as mock_check:
-            mock_check.side_effect = ImportError(
-                "openpyxl is required for Excel export"
-            )
-
-            with pytest.raises(ImportError) as exc_info:
-                ExcelExporter()
-
-            assert "openpyxl is required for Excel export" in str(exc_info.value)
-
-
-class TestEmailReporter:
-    """Test email reporting functionality."""
-
-    def test_email_reporter_initialization(self):
-        """Test email reporter initialization."""
-        smtp_config = {
-            "host": "smtp.example.com",
-            "port": 587,
-            "username": "user@example.com",
-            "password": "password",
-            "use_tls": True,
-        }
-
-        reporter = EmailReporter(smtp_config)
-        assert reporter.smtp_config == smtp_config
-
-    @patch("smtplib.SMTP")
-    @patch("src.aws_cost_cli.data_exporter.EmailReporter._create_attachments")
-    def test_send_report_basic(
-        self, mock_create_attachments, mock_smtp, sample_cost_data, sample_query_params
-    ):
-        """Test basic email report sending."""
-        # Mock SMTP
-        mock_server = MagicMock()
-        mock_smtp.return_value.__enter__.return_value = mock_server
-
-        # Mock attachments
-        mock_create_attachments.return_value = []
-
-        smtp_config = {
-            "host": "smtp.example.com",
-            "port": 587,
-            "username": "user@example.com",
-            "password": "password",
-            "use_tls": True,
-        }
-
-        reporter = EmailReporter(smtp_config)
-        recipients = ["test@example.com"]
-
-        result = reporter.send_report(
-            sample_cost_data, sample_query_params, recipients, include_attachments=False
-        )
-
-        assert result is True
-        mock_smtp.assert_called_with("smtp.example.com", 587)
-        mock_server.starttls.assert_called_once()
-        mock_server.login.assert_called_with("user@example.com", "password")
-        mock_server.send_message.assert_called_once()
-
-    def test_create_email_body(self, sample_cost_data, sample_query_params):
-        """Test email body creation."""
-        smtp_config = {
-            "host": "smtp.example.com",
-            "port": 587,
-            "username": "user@example.com",
-            "password": "password",
-        }
-
-        reporter = EmailReporter(smtp_config)
-        body = reporter._create_email_body(sample_cost_data, sample_query_params)
-
-        assert "<html>" in body
-        assert "AWS Cost Report for EC2" in body
-        assert "$525.00" in body
-        assert "Trend Analysis" in body
-        assert "📈" in body  # Trend up symbol
-        assert "Cost Forecast" in body
 
 
 class TestExportManager:
@@ -432,6 +359,31 @@ class TestExportManager:
             if os.path.exists(output_path):
                 os.unlink(output_path)
 
+    def test_export_manager_uses_date_formatting_config(
+        self, sample_cost_data, sample_query_params
+    ):
+        """Test export manager passes date formatting config to exporters."""
+        manager = ExportManager(
+            date_formatting_config=DateFormattingConfig(enabled=False)
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            output_path = f.name
+
+        try:
+            manager.export_data(
+                sample_cost_data, sample_query_params, "csv", output_path
+            )
+
+            with open(output_path, "r") as f:
+                content = f.read()
+                assert "2024-01-01 to 2024-01-31" in content
+                assert "January 1-31, 2024" not in content
+
+        finally:
+            if os.path.exists(output_path):
+                os.unlink(output_path)
+
     def test_export_data_unsupported_format(
         self, sample_cost_data, sample_query_params
     ):
@@ -448,31 +400,160 @@ class TestExportManager:
 
         assert "Unsupported export format 'pdf'" in str(exc_info.value)
 
-    @patch("src.aws_cost_cli.data_exporter.EmailReporter.send_report")
-    def test_send_email_report(
-        self, mock_send_report, sample_cost_data, sample_query_params
-    ):
-        """Test email report sending via manager."""
-        mock_send_report.return_value = True
 
-        manager = ExportManager()
-        smtp_config = {
-            "host": "smtp.example.com",
-            "port": 587,
-            "username": "user@example.com",
-            "password": "password",
-        }
+class TestFormattedDateExport:
+    """Test formatted date functionality in exports."""
 
-        result = manager.send_email_report(
-            sample_cost_data,
-            sample_query_params,
-            smtp_config,
-            ["test@example.com"],
-            attachment_formats=["csv"],
+    def test_csv_formatted_dates_single_month(self):
+        """Test CSV export with single month period formatting."""
+        # Create single month cost data
+        start_date = datetime(2024, 1, 1)
+        end_date = datetime(2024, 2, 1)  # Exclusive end date for single month
+
+        result = CostResult(
+            time_period=TimePeriod(start_date, end_date),
+            total=CostAmount(Decimal("100"), "USD"),
+            groups=[],
+            estimated=False,
         )
 
-        assert result is True
-        mock_send_report.assert_called_once()
+        cost_data = CostData(
+            results=[result],
+            time_period=TimePeriod(start_date, end_date),
+            total_cost=CostAmount(Decimal("100"), "USD"),
+            currency="USD",
+            group_definitions=[],
+        )
+
+        query_params = QueryParameters(service="EC2")
+        query_params.original_query = "EC2 costs for January"
+
+        exporter = CSVExporter()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+            output_path = f.name
+
+        try:
+            exporter.export(cost_data, query_params, output_path)
+
+            with open(output_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            # Should contain formatted month name
+            assert "January 2024" in content
+
+        finally:
+            if os.path.exists(output_path):
+                os.unlink(output_path)
+
+    def test_json_formatted_dates_single_day(self):
+        """Test JSON export with single day period formatting."""
+        # Create single day cost data
+        start_date = datetime(2024, 1, 15)
+        end_date = datetime(2024, 1, 16)  # Exclusive end date for single day
+
+        result = CostResult(
+            time_period=TimePeriod(start_date, end_date),
+            total=CostAmount(Decimal("50"), "USD"),
+            groups=[],
+            estimated=False,
+        )
+
+        cost_data = CostData(
+            results=[result],
+            time_period=TimePeriod(start_date, end_date),
+            total_cost=CostAmount(Decimal("50"), "USD"),
+            currency="USD",
+            group_definitions=[],
+        )
+
+        query_params = QueryParameters(service="S3")
+        query_params.original_query = "S3 costs for January 15"
+
+        exporter = JSONExporter()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            output_path = f.name
+
+        try:
+            exporter.export(cost_data, query_params, output_path)
+
+            with open(output_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Check metadata formatted period
+            formatted_period = data["metadata"]["time_period"]["formatted"]
+            assert "January 15, 2024" in formatted_period
+
+            # Check result formatted period
+            result_formatted = data["results"][0]["time_period"]["formatted"]
+            assert "January 15, 2024" in result_formatted
+
+        finally:
+            if os.path.exists(output_path):
+                os.unlink(output_path)
+
+    def test_formatted_dates_fallback_handling(self):
+        """Test that exports handle date formatting failures gracefully."""
+        # Create invalid time period that might cause formatting issues
+        start_date = datetime(2024, 1, 15)  # Mid-month start
+        end_date = datetime(2024, 2, 10)  # Mid-month end (custom range)
+
+        result = CostResult(
+            time_period=TimePeriod(start_date, end_date),
+            total=CostAmount(Decimal("75"), "USD"),
+            groups=[],
+            estimated=False,
+        )
+
+        cost_data = CostData(
+            results=[result],
+            time_period=TimePeriod(start_date, end_date),
+            total_cost=CostAmount(Decimal("75"), "USD"),
+            currency="USD",
+            group_definitions=[],
+        )
+
+        query_params = QueryParameters(service="RDS")
+        query_params.original_query = "RDS costs for custom period"
+
+        # Test CSV export
+        csv_exporter = CSVExporter()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+            csv_output_path = f.name
+
+        try:
+            csv_exporter.export(cost_data, query_params, csv_output_path)
+
+            with open(csv_output_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            # Should contain some formatted date (custom range format)
+            assert "January" in content and "February" in content
+
+        finally:
+            if os.path.exists(csv_output_path):
+                os.unlink(csv_output_path)
+
+        # Test JSON export
+        json_exporter = JSONExporter()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json_output_path = f.name
+
+        try:
+            json_exporter.export(cost_data, query_params, json_output_path)
+
+            with open(json_output_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Should have formatted dates that are not error messages
+            formatted_period = data["metadata"]["time_period"]["formatted"]
+            assert formatted_period != "Invalid date range"
+            assert "January" in formatted_period and "February" in formatted_period
+
+        finally:
+            if os.path.exists(json_output_path):
+                os.unlink(json_output_path)
 
 
 class TestIntegration:
@@ -536,10 +617,7 @@ class TestIntegration:
             assert "metadata" in data
             assert "summary" in data
             assert "results" in data
-            assert "trend_analysis" in data
-            assert "forecast" in data
 
             # Verify data integrity
             assert data["summary"]["total_cost"]["amount"] == 525.0
             assert len(data["results"]) == 3
-            assert data["trend_analysis"]["change"]["direction"] == "up"

@@ -1,13 +1,31 @@
 # Development Environment Configuration
 # Optimized for development workflow and debugging
 
-# LLM Provider - Cost-effective for development
-llm_provider: "openai"
+# LLM Provider - Local processing for development (no API costs)
+llm_provider: "ollama"  # Default: local processing, no API key required
 llm_config:
-  model: "gpt-3.5-turbo"  # Cheaper model for development
-  max_tokens: 2000
-  temperature: 0.2
-  timeout: 30
+  ollama:
+    model: "llama2"  # Good balance for development
+    base_url: "http://localhost:11434"
+    max_tokens: 2000
+    temperature: 0.2
+    timeout: 60
+  openai:
+    model: "gpt-3.5-turbo"  # Fallback cloud option
+    max_tokens: 2000
+    temperature: 0.2
+    timeout: 30
+  gemini:
+    model: "gemini-1.5-flash"  # Fast and cost-effective cloud option
+    max_tokens: 2000
+    temperature: 0.2
+    timeout: 30
+
+# Fallback providers for development
+fallback_providers:
+  - "ollama"    # Local first (no costs)
+  - "gemini"    # Fast cloud option
+  - "openai"    # Reliable fallback
 
 # AWS Configuration
 default_profile: "dev"

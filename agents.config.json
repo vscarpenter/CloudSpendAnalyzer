@@ -1,0 +1,16 @@
+{
+	"nanocoder": {
+		"providers": [
+			{
+				"name": "Ollama",
+				"baseUrl": "http://localhost:11434/v1",
+				"models": ["qwen3-coder:30b", "llama3.2"]
+			},
+			{
+				"name": "LM Studio",
+				"baseUrl": "http://localhost:1234/v1",
+				"models": ["local-model"]
+			}
+		]
+	}
+}

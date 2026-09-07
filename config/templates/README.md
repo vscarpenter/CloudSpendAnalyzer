@@ -81,9 +81,10 @@ Many templates reference environment variables for sensitive information:
 # Database password (for production/organization templates)
 export AWS_COST_CLI_DB_PASSWORD="your-db-password"
 
-# API keys for LLM providers
+# API keys for LLM providers (optional - Ollama is default and requires no API key)
 export OPENAI_API_KEY="your-openai-key"
 export ANTHROPIC_API_KEY="your-anthropic-key"
+export GEMINI_API_KEY="your-gemini-key"
 
 # AWS credentials (if not using profiles)
 export AWS_ACCESS_KEY_ID="your-access-key"
@@ -113,7 +114,8 @@ aws-cost-cli config test-connection
 ## Environment-Specific Customizations
 
 ### Development Environment
-- Uses cheaper LLM models (GPT-3.5-turbo)
+- Uses local Ollama provider (no API costs)
+- Fallback to cost-effective cloud models (Gemini, GPT-3.5-turbo)
 - Longer cache TTL to reduce API calls
 - Verbose logging for debugging
 - No database requirements
@@ -163,13 +165,28 @@ For production deployments:
 
 ## Common Customizations
 
-### Adding New LLM Providers
+### LLM Provider Configuration
 ```yaml
-llm_provider: "custom"
+# Default: Local processing with Ollama (no API key required)
+llm_provider: "ollama"
 llm_config:
-  endpoint: "https://your-custom-llm-endpoint"
-  api_key: "${CUSTOM_LLM_API_KEY}"
-  model: "your-model-name"
+  ollama:
+    model: "llama2"
+    base_url: "http://localhost:11434"
+  
+  # Cloud providers (require API keys)
+  gemini:
+    model: "gemini-1.5-flash"  # Fast and cost-effective
+  openai:
+    model: "gpt-3.5-turbo"     # Reliable option
+  anthropic:
+    model: "claude-3-haiku-20240307"  # High-quality option
+
+# Fallback providers (tried in order if primary fails)
+fallback_providers:
+  - "ollama"    # Local first
+  - "gemini"    # Fast cloud option
+  - "openai"    # Reliable cloud option
 ```
 
 ### Custom Email Configuration

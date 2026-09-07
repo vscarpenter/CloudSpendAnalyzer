@@ -11,9 +11,9 @@ from .models import (
     CostResult,
     CostAmount,
     QueryParameters,
-    TrendData,
-    ForecastData,
+    DateFormattingConfig,
 )
+from .date_formatter import DateFormatter
 
 
 class ResponseFormatter(ABC):
@@ -31,7 +31,10 @@ class LLMResponseFormatter(ResponseFormatter):
     """LLM-powered response formatter for natural language responses."""
 
     def __init__(
-        self, llm_provider, fallback_formatter: Optional[ResponseFormatter] = None
+        self,
+        llm_provider,
+        fallback_formatter: Optional[ResponseFormatter] = None,
+        date_formatting_config: Optional[DateFormattingConfig] = None,
     ):
         """
         Initialize LLM response formatter.
@@ -39,9 +42,13 @@ class LLMResponseFormatter(ResponseFormatter):
         Args:
             llm_provider: LLM provider instance (OpenAI, Anthropic, etc.)
             fallback_formatter: Fallback formatter if LLM fails
+            date_formatting_config: Date formatting behavior for displayed periods
         """
         self.llm_provider = llm_provider
-        self.fallback_formatter = fallback_formatter or SimpleResponseFormatter()
+        self.fallback_formatter = fallback_formatter or SimpleResponseFormatter(
+            date_formatting_config=date_formatting_config
+        )
+        self.date_formatter = DateFormatter(date_formatting_config)
 
     def format_response(
         self, cost_data: CostData, original_query: str, query_params: QueryParameters
@@ -71,6 +78,11 @@ class LLMResponseFormatter(ResponseFormatter):
         self, cost_data: CostData, query_params: QueryParameters
     ) -> Dict[str, Any]:
         """Prepare cost data summary for LLM processing."""
+        # Format the main time period for better LLM understanding
+        formatted_period = self.date_formatter.safe_format_time_period(
+            cost_data.time_period
+        )
+
         summary = {
             "total_cost": {
                 "amount": float(cost_data.total_cost.amount),
@@ -79,6 +91,7 @@ class LLMResponseFormatter(ResponseFormatter):
             "time_period": {
                 "start": cost_data.time_period.start.strftime("%Y-%m-%d"),
                 "end": cost_data.time_period.end.strftime("%Y-%m-%d"),
+                "formatted": formatted_period,
             },
             "service": query_params.service,
             "granularity": (
@@ -89,47 +102,16 @@ class LLMResponseFormatter(ResponseFormatter):
             "results": [],
         }
 
-        # Add trend analysis data if available
-        if cost_data.trend_data:
-            summary["trend_analysis"] = {
-                "current_period_cost": float(
-                    cost_data.trend_data.current_period.amount
-                ),
-                "comparison_period_cost": float(
-                    cost_data.trend_data.comparison_period.amount
-                ),
-                "change_amount": float(cost_data.trend_data.change_amount.amount),
-                "change_percentage": cost_data.trend_data.change_percentage,
-                "trend_direction": cost_data.trend_data.trend_direction,
-            }
-
-        # Add forecast data if available
-        if cost_data.forecast_data:
-            summary["forecast"] = []
-            for forecast in cost_data.forecast_data:
-                summary["forecast"].append(
-                    {
-                        "period": {
-                            "start": forecast.forecast_period.start.strftime(
-                                "%Y-%m-%d"
-                            ),
-                            "end": forecast.forecast_period.end.strftime("%Y-%m-%d"),
-                        },
-                        "forecasted_amount": float(forecast.forecasted_amount.amount),
-                        "confidence_interval": {
-                            "lower": float(forecast.confidence_interval_lower.amount),
-                            "upper": float(forecast.confidence_interval_upper.amount),
-                        },
-                        "accuracy": forecast.prediction_accuracy,
-                    }
-                )
-
         # Add detailed results (limit to avoid token limits)
         for result in cost_data.results[:10]:  # Limit to 10 results
+            formatted_result_period = self.date_formatter.safe_format_time_period(
+                result.time_period
+            )
             result_data = {
                 "period": {
                     "start": result.time_period.start.strftime("%Y-%m-%d"),
                     "end": result.time_period.end.strftime("%Y-%m-%d"),
+                    "formatted": formatted_result_period,
                 },
                 "total": {
                     "amount": float(result.total.amount),
@@ -249,6 +231,7 @@ Please provide a clear, conversational response that directly answers the user's
 Guidelines:
 - Answer the user's question directly and conversationally
 - Include specific dollar amounts and time periods from the data
+- Use the formatted time periods (e.g., "January 2025", "Q1 2025") instead of raw dates when available
 - Use natural language, not technical jargon
 - Highlight important insights or patterns in the spending
 - If costs are estimated, mention that
@@ -257,13 +240,19 @@ Guidelines:
 - If there are multiple services or time periods, summarize the key points
 
 Example good response:
-"Your EC2 costs for January 2024 were $1,234.56. This represents a 15% increase from December, primarily due to increased usage of m5.large instances."
+"Your EC2 costs for January 2025 were $1,234.56. This represents a 15% increase from December 2024, primarily due to increased usage of m5.large instances."
+
+Note: The cost data includes both raw dates (start/end) and formatted time periods. Always prefer the formatted periods for better readability.
 
 Do not include JSON, technical details about the API, or implementation details. Focus on answering the user's business question about their AWS spending."""
 
 
 class SimpleResponseFormatter(ResponseFormatter):
     """Simple text-based response formatter without LLM."""
+
+    def __init__(self, date_formatting_config: Optional[DateFormattingConfig] = None):
+        """Initialize SimpleResponseFormatter with DateFormatter."""
+        self.date_formatter = DateFormatter(date_formatting_config)
 
     def format_response(
         self, cost_data: CostData, original_query: str, query_params: QueryParameters
@@ -285,49 +274,6 @@ class SimpleResponseFormatter(ResponseFormatter):
         # Total cost
         total_formatted = self._format_currency(cost_data.total_cost)
         lines.append(f"Total Cost: {total_formatted}")
-
-        # Add trend analysis if available
-        if cost_data.trend_data:
-            lines.append("")
-            lines.append("Trend Analysis:")
-            lines.append("-" * 15)
-
-            trend = cost_data.trend_data
-            comparison_cost = self._format_currency(trend.comparison_period)
-            change_amount = self._format_currency(trend.change_amount)
-
-            direction_symbol = (
-                "📈"
-                if trend.trend_direction == "up"
-                else "📉" if trend.trend_direction == "down" else "➡️"
-            )
-
-            lines.append(f"  Previous Period: {comparison_cost}")
-            lines.append(
-                f"  Change: {change_amount} ({trend.change_percentage:+.1f}%) {direction_symbol}"
-            )
-            lines.append(f"  Trend: {trend.trend_direction.title()}")
-
-        # Add forecast if available
-        if cost_data.forecast_data:
-            lines.append("")
-            lines.append("Cost Forecast:")
-            lines.append("-" * 14)
-
-            for i, forecast in enumerate(
-                cost_data.forecast_data[:3], 1
-            ):  # Show first 3 months
-                period = self._format_time_period(forecast.forecast_period)
-                forecasted = self._format_currency(forecast.forecasted_amount)
-                lower = self._format_currency(forecast.confidence_interval_lower)
-                upper = self._format_currency(forecast.confidence_interval_upper)
-
-                accuracy_text = ""
-                if forecast.prediction_accuracy:
-                    accuracy_text = f" (confidence: {forecast.prediction_accuracy:.0%})"
-
-                lines.append(f"  Month {i} ({period}): {forecasted}")
-                lines.append(f"    Range: {lower} - {upper}{accuracy_text}")
 
         lines.append("")
 
@@ -389,7 +335,11 @@ class SimpleResponseFormatter(ResponseFormatter):
             return f"${cost_amount.amount:.2f}"
 
     def _format_time_period(self, time_period) -> str:
-        """Format time period for display."""
+        """Format time period for display using DateFormatter."""
+        return self._format_time_period_enhanced(time_period)
+
+    def _legacy_format_time_period(self, time_period) -> str:
+        """Original time period formatting for backward compatibility."""
         start_str = time_period.start.strftime("%Y-%m-%d")
         end_str = time_period.end.strftime("%Y-%m-%d")
 
@@ -405,6 +355,10 @@ class SimpleResponseFormatter(ResponseFormatter):
             return time_period.start.strftime("%B %Y")
 
         return f"{start_str} to {end_str}"
+
+    def _format_time_period_enhanced(self, time_period) -> str:
+        """Enhanced time period formatting using DateFormatter."""
+        return self.date_formatter.safe_format_time_period(time_period)
 
     def _generate_simple_insights(
         self, cost_data: CostData, query_params: QueryParameters
@@ -437,15 +391,23 @@ class SimpleResponseFormatter(ResponseFormatter):
 class RichResponseFormatter(ResponseFormatter):
     """Rich terminal output formatter with enhanced formatting."""
 
-    def __init__(self, fallback_formatter: Optional[ResponseFormatter] = None):
+    def __init__(
+        self,
+        fallback_formatter: Optional[ResponseFormatter] = None,
+        date_formatting_config: Optional[DateFormattingConfig] = None,
+    ):
         """
         Initialize Rich response formatter.
 
         Args:
             fallback_formatter: Fallback formatter if Rich is not available
+            date_formatting_config: Date formatting behavior for displayed periods
         """
-        self.fallback_formatter = fallback_formatter or SimpleResponseFormatter()
+        self.fallback_formatter = fallback_formatter or SimpleResponseFormatter(
+            date_formatting_config=date_formatting_config
+        )
         self._rich_available = self._check_rich_availability()
+        self.date_formatter = DateFormatter(date_formatting_config)
 
     def _check_rich_availability(self) -> bool:
         """Check if Rich library is available."""
@@ -502,14 +464,6 @@ class RichResponseFormatter(ResponseFormatter):
                     padding=(1, 2),
                 )
             )
-
-            # Add trend analysis panel if available
-            if cost_data.trend_data:
-                self._add_trend_panel(console, cost_data.trend_data)
-
-            # Add forecast panel if available
-            if cost_data.forecast_data:
-                self._add_forecast_panel(console, cost_data.forecast_data)
 
             # Detailed breakdown table
             if len(cost_data.results) > 1:
@@ -606,93 +560,6 @@ class RichResponseFormatter(ResponseFormatter):
             # Skip group breakdown on any error
             pass
 
-    def _add_trend_panel(self, console, trend_data: TrendData):
-        """Add trend analysis panel to console output."""
-        try:
-            from rich.panel import Panel
-            from rich.text import Text
-            from rich.columns import Columns
-
-            # Format trend information
-            current_cost = self._format_currency(trend_data.current_period)
-            comparison_cost = self._format_currency(trend_data.comparison_period)
-            change_amount = self._format_currency(trend_data.change_amount)
-
-            # Choose colors and symbols based on trend
-            if trend_data.trend_direction == "up":
-                trend_color = "red"
-                trend_symbol = "📈"
-            elif trend_data.trend_direction == "down":
-                trend_color = "green"
-                trend_symbol = "📉"
-            else:
-                trend_color = "yellow"
-                trend_symbol = "➡️"
-
-            # Create trend text
-            trend_text = Text()
-            trend_text.append(f"Previous: {comparison_cost}\n")
-            trend_text.append(f"Current: {current_cost}\n")
-            trend_text.append(f"Change: {change_amount} (", style="white")
-            trend_text.append(
-                f"{trend_data.change_percentage:+.1f}%", style=f"bold {trend_color}"
-            )
-            trend_text.append(f") {trend_symbol}", style="white")
-
-            console.print(
-                Panel(
-                    trend_text,
-                    title="📊 Trend Analysis",
-                    border_style=trend_color,
-                    padding=(1, 2),
-                )
-            )
-
-        except Exception:
-            # Skip trend panel on any error
-            pass
-
-    def _add_forecast_panel(self, console, forecast_data: List[ForecastData]):
-        """Add forecast panel to console output."""
-        try:
-            from rich.panel import Panel
-            from rich.table import Table
-            from rich import box
-
-            table = Table(box=box.SIMPLE, show_header=True, header_style="bold cyan")
-
-            table.add_column("Month", style="cyan")
-            table.add_column("Forecast", justify="right", style="green")
-            table.add_column("Range", justify="center", style="yellow")
-            table.add_column("Confidence", justify="center")
-
-            for i, forecast in enumerate(forecast_data[:3], 1):  # Show first 3 months
-                _period = self._format_time_period(forecast.forecast_period)
-                forecasted = self._format_currency(forecast.forecasted_amount)
-                lower = self._format_currency(forecast.confidence_interval_lower)
-                upper = self._format_currency(forecast.confidence_interval_upper)
-
-                confidence = ""
-                if forecast.prediction_accuracy:
-                    confidence = f"{forecast.prediction_accuracy:.0%}"
-
-                table.add_row(
-                    f"Month {i}", forecasted, f"{lower} - {upper}", confidence
-                )
-
-            console.print(
-                Panel(
-                    table,
-                    title="🔮 Cost Forecast",
-                    border_style="magenta",
-                    padding=(1, 2),
-                )
-            )
-
-        except Exception:
-            # Skip forecast panel on any error
-            pass
-
     def _format_currency(self, cost_amount: CostAmount) -> str:
         """Format currency amount."""
         if cost_amount.amount == 0:
@@ -705,7 +572,11 @@ class RichResponseFormatter(ResponseFormatter):
             return f"${cost_amount.amount:.2f}"
 
     def _format_time_period(self, time_period) -> str:
-        """Format time period for display."""
+        """Format time period for display using DateFormatter."""
+        return self._format_time_period_enhanced(time_period)
+
+    def _legacy_format_time_period(self, time_period) -> str:
+        """Original time period formatting for backward compatibility."""
         start_str = time_period.start.strftime("%Y-%m-%d")
         end_str = time_period.end.strftime("%Y-%m-%d")
 
@@ -721,6 +592,10 @@ class RichResponseFormatter(ResponseFormatter):
             return time_period.start.strftime("%B %Y")
 
         return f"{start_str} to {end_str}"
+
+    def _format_time_period_enhanced(self, time_period) -> str:
+        """Enhanced time period formatting using DateFormatter."""
+        return self.date_formatter.safe_format_time_period(time_period)
 
     def _generate_rich_insights(
         self, cost_data: CostData, query_params: QueryParameters
@@ -770,26 +645,38 @@ class RichResponseFormatter(ResponseFormatter):
 class ResponseGenerator:
     """Main response generator that coordinates different formatters."""
 
-    def __init__(self, llm_provider=None, output_format: str = "simple"):
+    def __init__(
+        self,
+        llm_provider=None,
+        output_format: str = "simple",
+        date_formatting_config: Optional[DateFormattingConfig] = None,
+    ):
         """
         Initialize response generator.
 
         Args:
             llm_provider: LLM provider for natural language responses
             output_format: Output format ("simple", "rich", "llm")
+            date_formatting_config: Date formatting behavior for displayed periods
         """
         self.llm_provider = llm_provider
         self.output_format = output_format.lower()
+        self.date_formatting_config = date_formatting_config
 
         # Initialize formatters
-        self.simple_formatter = SimpleResponseFormatter()
+        self.simple_formatter = SimpleResponseFormatter(
+            date_formatting_config=date_formatting_config
+        )
         self.rich_formatter = RichResponseFormatter(
-            fallback_formatter=self.simple_formatter
+            fallback_formatter=self.simple_formatter,
+            date_formatting_config=date_formatting_config,
         )
 
         if llm_provider:
             self.llm_formatter = LLMResponseFormatter(
-                llm_provider, fallback_formatter=self.rich_formatter
+                llm_provider,
+                fallback_formatter=self.rich_formatter,
+                date_formatting_config=date_formatting_config,
             )
         else:
             self.llm_formatter = None

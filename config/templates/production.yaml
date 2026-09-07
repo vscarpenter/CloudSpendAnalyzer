@@ -2,19 +2,36 @@
 # Optimized for reliability, performance, and monitoring
 
 # LLM Provider - Production grade with fallback
-llm_provider: "anthropic"
+llm_provider: "ollama"  # Default: local processing for production reliability
 llm_config:
-  model: "claude-3-sonnet-20240229"
-  max_tokens: 4000
-  temperature: 0.1
-  timeout: 45
-  
-# Fallback LLM configuration
-llm_fallback:
-  provider: "openai"
-  model: "gpt-4"
-  max_tokens: 4000
-  temperature: 0.1
+  ollama:
+    model: "llama2"  # Reliable local model
+    base_url: "http://localhost:11434"
+    max_tokens: 4000
+    temperature: 0.1
+    timeout: 60
+  anthropic:
+    model: "claude-3-sonnet-20240229"  # High-quality cloud option
+    max_tokens: 4000
+    temperature: 0.1
+    timeout: 45
+  gemini:
+    model: "gemini-1.5-pro"  # Fast cloud option
+    max_tokens: 4000
+    temperature: 0.1
+    timeout: 45
+  openai:
+    model: "gpt-4"  # Premium cloud option
+    max_tokens: 4000
+    temperature: 0.1
+    timeout: 45
+
+# Fallback providers for production reliability
+fallback_providers:
+  - "ollama"     # Local first (no external dependencies)
+  - "gemini"     # Fast cloud option
+  - "anthropic"  # High-quality cloud option
+  - "openai"     # Premium fallback
 
 # AWS Configuration
 default_profile: "production"

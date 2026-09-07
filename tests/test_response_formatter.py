@@ -21,6 +21,7 @@ from src.aws_cost_cli.models import (
     TimePeriodGranularity,
     MetricType,
     Group,
+    DateFormattingConfig,
 )
 
 
@@ -34,7 +35,9 @@ class TestSimpleResponseFormatter:
         # Create test data
         self.time_period = TimePeriod(
             start=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            end=datetime(2024, 1, 31, tzinfo=timezone.utc),
+            end=datetime(
+                2024, 2, 1, tzinfo=timezone.utc
+            ),  # Exclusive end date for full month
         )
 
         self.cost_data = CostData(
@@ -104,16 +107,20 @@ class TestSimpleResponseFormatter:
         """Test time period formatting for same day."""
         period = TimePeriod(
             start=datetime(2024, 1, 15, tzinfo=timezone.utc),
-            end=datetime(2024, 1, 15, tzinfo=timezone.utc),
+            end=datetime(
+                2024, 1, 16, tzinfo=timezone.utc
+            ),  # Exclusive end date for single day
         )
         result = self.formatter._format_time_period(period)
-        assert result == "2024-01-15"
+        assert result == "January 15, 2024"
 
     def test_format_time_period_same_month(self):
         """Test time period formatting for same month."""
         period = TimePeriod(
             start=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            end=datetime(2024, 1, 31, tzinfo=timezone.utc),
+            end=datetime(
+                2024, 2, 1, tzinfo=timezone.utc
+            ),  # Exclusive end date for full month
         )
         result = self.formatter._format_time_period(period)
         assert result == "January 2024"
@@ -125,7 +132,7 @@ class TestSimpleResponseFormatter:
             end=datetime(2024, 2, 15, tzinfo=timezone.utc),
         )
         result = self.formatter._format_time_period(period)
-        assert result == "2024-01-15 to 2024-02-15"
+        assert result == "January 15 - February 14, 2024"
 
     def test_generate_insights_estimated_costs(self):
         """Test insight generation for estimated costs."""
@@ -225,7 +232,9 @@ class TestRichResponseFormatter:
 
         self.time_period = TimePeriod(
             start=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            end=datetime(2024, 1, 31, tzinfo=timezone.utc),
+            end=datetime(
+                2024, 2, 1, tzinfo=timezone.utc
+            ),  # Exclusive end date for full month
         )
 
         self.cost_data = CostData(
@@ -310,7 +319,9 @@ class TestLLMResponseFormatter:
 
         self.time_period = TimePeriod(
             start=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            end=datetime(2024, 1, 31, tzinfo=timezone.utc),
+            end=datetime(
+                2024, 2, 1, tzinfo=timezone.utc
+            ),  # Exclusive end date for full month
         )
 
         self.cost_data = CostData(
@@ -445,6 +456,134 @@ class TestLLMResponseFormatter:
         # Should be limited to 10 results
         assert len(summary["results"]) == 10
 
+    def test_prepare_cost_summary_includes_formatted_dates(self):
+        """Test that cost summary includes formatted dates alongside raw dates."""
+        summary = self.formatter._prepare_cost_summary(
+            self.cost_data, self.query_params
+        )
+
+        # Check main time period has formatted date
+        assert "formatted" in summary["time_period"]
+        # The current test period (Jan 1-31) will be formatted as a custom range
+        assert "January" in summary["time_period"]["formatted"]
+        assert "2024" in summary["time_period"]["formatted"]
+        assert summary["time_period"]["start"] == "2024-01-01"
+        assert summary["time_period"]["end"] == "2024-02-01"
+
+        # Check results have formatted dates
+        assert len(summary["results"]) == 1
+        result = summary["results"][0]
+        assert "formatted" in result["period"]
+        assert "January" in result["period"]["formatted"]
+        assert "2024" in result["period"]["formatted"]
+        assert result["period"]["start"] == "2024-01-01"
+        assert result["period"]["end"] == "2024-02-01"
+
+    def test_prepare_cost_summary_formatted_dates_single_day(self):
+        """Test formatted dates for single day periods."""
+        single_day_period = TimePeriod(
+            start=datetime(2024, 1, 15, tzinfo=timezone.utc),
+            end=datetime(2024, 1, 16, tzinfo=timezone.utc),  # Exclusive end date
+        )
+
+        cost_data = CostData(
+            results=[
+                CostResult(
+                    time_period=single_day_period,
+                    total=CostAmount(Decimal("50.00"), "USD"),
+                    groups=[],
+                    estimated=False,
+                )
+            ],
+            time_period=single_day_period,
+            total_cost=CostAmount(Decimal("50.00"), "USD"),
+        )
+
+        query_params = QueryParameters(
+            service="EC2",
+            time_period=single_day_period,
+            granularity=TimePeriodGranularity.DAILY,
+        )
+
+        summary = self.formatter._prepare_cost_summary(cost_data, query_params)
+
+        # Check formatted date for single day
+        assert summary["time_period"]["formatted"] == "January 15, 2024"
+        assert summary["results"][0]["period"]["formatted"] == "January 15, 2024"
+
+    def test_prepare_cost_summary_formatted_dates_quarter(self):
+        """Test formatted dates for quarterly periods."""
+        quarter_period = TimePeriod(
+            start=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            end=datetime(2024, 4, 1, tzinfo=timezone.utc),  # Q1 2024
+        )
+
+        cost_data = CostData(
+            results=[
+                CostResult(
+                    time_period=quarter_period,
+                    total=CostAmount(Decimal("300.00"), "USD"),
+                    groups=[],
+                    estimated=False,
+                )
+            ],
+            time_period=quarter_period,
+            total_cost=CostAmount(Decimal("300.00"), "USD"),
+        )
+
+        query_params = QueryParameters(
+            service="EC2",
+            time_period=quarter_period,
+            granularity=TimePeriodGranularity.MONTHLY,
+        )
+
+        summary = self.formatter._prepare_cost_summary(cost_data, query_params)
+
+        # Check formatted date for quarter (now correctly detected as quarter)
+        assert summary["time_period"]["formatted"] == "Q1 2024"
+        assert summary["results"][0]["period"]["formatted"] == "Q1 2024"
+
+    def test_system_prompt_mentions_formatted_dates(self):
+        """Test that the system prompt instructs LLM to use formatted dates."""
+        system_prompt = self.formatter._get_response_system_prompt()
+
+        assert "formatted time periods" in system_prompt
+        assert "January 2025" in system_prompt
+        assert "Q1 2025" in system_prompt
+        assert "formatted periods for better readability" in system_prompt
+
+    def test_llm_response_with_formatted_dates_integration(self):
+        """Test integration of formatted dates in LLM responses."""
+        # Mock the LLM provider to return a response that uses formatted dates
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = (
+            "Your EC2 costs for January 2024 were $123.45. This is a significant "
+            "improvement from the previous month."
+        )
+        mock_client.chat.completions.create.return_value = mock_response
+
+        self.mock_llm_provider._get_client.return_value = mock_client
+        self.mock_llm_provider.model = "gpt-3.5-turbo"
+
+        response = self.formatter.format_response(
+            self.cost_data, "What did I spend on EC2 last month?", self.query_params
+        )
+
+        # Verify the response uses formatted dates
+        assert "January 2024" in response
+        assert "$123.45" in response
+
+        # Verify that the LLM was called with formatted date information
+        mock_client.chat.completions.create.assert_called_once()
+        call_args = mock_client.chat.completions.create.call_args
+        user_message = call_args[1]["messages"][1]["content"]
+
+        # The user message should contain the cost summary with formatted dates
+        assert "formatted" in user_message
+        assert "January" in user_message
+
 
 class TestResponseGenerator:
     """Test cases for ResponseGenerator."""
@@ -456,7 +595,9 @@ class TestResponseGenerator:
 
         self.time_period = TimePeriod(
             start=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            end=datetime(2024, 1, 31, tzinfo=timezone.utc),
+            end=datetime(
+                2024, 2, 1, tzinfo=timezone.utc
+            ),  # Exclusive end date for full month
         )
 
         self.cost_data = CostData(
@@ -506,6 +647,20 @@ class TestResponseGenerator:
 
         assert "AWS Cost Summary for EC2" in response
         assert "$123.45" in response
+
+    def test_format_response_uses_date_formatting_config(self):
+        """Test response generator passes date formatting config to formatters."""
+        generator = ResponseGenerator(
+            output_format="simple",
+            date_formatting_config=DateFormattingConfig(enabled=False),
+        )
+
+        response = generator.format_response(
+            self.cost_data, "What did I spend on EC2?", self.query_params
+        )
+
+        assert "2024-01-01 to 2024-02-01" in response
+        assert "January 2024" not in response
 
     @patch(
         "src.aws_cost_cli.response_formatter.RichResponseFormatter._check_rich_availability"

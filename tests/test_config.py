@@ -16,16 +16,22 @@ from aws_cost_cli.exceptions import ConfigurationError
 class TestConfigManager:
     """Test cases for ConfigManager."""
 
+    @patch.object(ConfigManager, "DEFAULT_CONFIG_PATHS", [])
     def test_load_default_config(self):
-        """Test loading default configuration."""
+        """Test loading default configuration.
+
+        Auto-discovery is disabled so the developer's real ``~/.aws-cost-cli``
+        config can't leak in and override the documented defaults.
+        """
         manager = ConfigManager()
         config = manager.load_config()
 
-        assert config.llm_provider == "openai"
+        assert config.llm_provider == "ollama"
         assert config.cache_ttl == 3600
         assert config.output_format == "simple"
         assert config.default_currency == "USD"
         assert config.default_profile is None
+        assert config.fallback_providers == ["ollama", "openai", "anthropic", "gemini"]
 
     def test_load_yaml_config_file(self):
         """Test loading configuration from YAML file."""
@@ -114,9 +120,14 @@ class TestConfigManager:
         assert config.output_format == "json"
         assert config.llm_config["openai"]["api_key"] == "test-openai-key"
 
+    @patch.object(ConfigManager, "DEFAULT_CONFIG_PATHS", [])
     @patch.dict(os.environ, {"AWS_COST_CLI_CACHE_TTL": "invalid"})
     def test_invalid_env_config(self):
-        """Test handling of invalid environment variable values."""
+        """Test handling of invalid environment variable values.
+
+        Auto-discovery is disabled so the developer's real ``~/.aws-cost-cli``
+        config can't leak in and override the default cache TTL.
+        """
         manager = ConfigManager()
         config = manager.load_config()
 
@@ -146,7 +157,7 @@ class TestConfigManager:
 
     def test_validate_config_valid(self):
         """Test validation of valid configuration."""
-        config = Config(llm_provider="openai", output_format="simple", cache_ttl=3600)
+        config = Config(llm_provider="ollama", output_format="simple", cache_ttl=3600)
 
         manager = ConfigManager()
         assert manager.validate_config(config) is True
@@ -175,8 +186,62 @@ class TestConfigManager:
         with pytest.raises(ConfigurationError, match="Cache TTL must be non-negative"):
             manager.validate_config(config)
 
+    def test_validate_config_gemini_missing_api_key(self):
+        """Test validation of Gemini provider without API key."""
+        config = Config(llm_provider="gemini", llm_config={})
+
+        manager = ConfigManager()
+        with pytest.raises(ConfigurationError, match="Gemini API key is required"):
+            manager.validate_config(config)
+
+    def test_validate_config_gemini_valid(self):
+        """Test validation of valid Gemini configuration."""
+        config = Config(
+            llm_provider="gemini",
+            llm_config={"gemini": {"api_key": "test-key", "model": "gemini-1.5-flash"}}
+        )
+
+        manager = ConfigManager()
+        assert manager.validate_config(config) is True
+
+    def test_validate_config_gemini_invalid_model(self):
+        """Test validation of invalid Gemini model."""
+        config = Config(
+            llm_provider="gemini",
+            llm_config={"gemini": {"api_key": "test-key", "model": "invalid-model"}}
+        )
+
+        manager = ConfigManager()
+        with pytest.raises(ConfigurationError, match="Invalid Gemini model"):
+            manager.validate_config(config)
+
+    @patch.dict(
+        os.environ,
+        {
+            "GEMINI_API_KEY": "test-gemini-key",
+            "GEMINI_MODEL": "gemini-1.5-pro",
+        },
+    )
+    def test_load_gemini_env_config(self):
+        """Test loading Gemini configuration from environment variables."""
+        manager = ConfigManager()
+        config = manager.load_config()
+
+        assert config.llm_config["gemini"]["api_key"] == "test-gemini-key"
+        assert config.llm_config["gemini"]["model"] == "gemini-1.5-pro"
+
+    @patch.object(
+        ConfigManager,
+        "DEFAULT_CONFIG_PATHS",
+        [".aws-cost-cli.yaml", ".aws-cost-cli.yml", ".aws-cost-cli.json"],
+    )
     def test_auto_discover_config_file(self):
-        """Test automatic discovery of configuration files."""
+        """Test automatic discovery of configuration files.
+
+        Restricted to the current-directory patterns so the test exercises
+        discovery of the file it creates rather than the developer's real
+        ``~/.aws-cost-cli`` config (which would otherwise shadow it).
+        """
         config_data = {"llm_provider": "bedrock"}
 
         # Create config in current directory

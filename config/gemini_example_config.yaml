@@ -1,0 +1,55 @@
+# Example configuration for Google Gemini provider
+
+# LLM Provider Configuration
+llm_provider: "gemini"
+llm_config:
+  gemini:
+    # API key should be set via GEMINI_API_KEY environment variable
+    model: "gemini-1.5-flash"  # Fast and cost-effective
+    # Alternative: "gemini-1.5-pro" for more capable responses
+    temperature: 0.1
+    max_tokens: 1000
+  
+  # Fallback providers (if Gemini fails)
+  ollama:
+    model: "llama2"
+    base_url: "http://localhost:11434"
+    temperature: 0.1
+    max_tokens: 1000
+    timeout: 60
+  
+  openai:
+    # API key should be set via OPENAI_API_KEY environment variable
+    model: "gpt-3.5-turbo"
+    temperature: 0.1
+    max_tokens: 1000
+
+# Fallback provider configuration
+fallback_providers:
+  - "gemini"    # Primary provider
+  - "ollama"    # Local fallback
+  - "openai"    # Cloud fallback
+
+# AWS Configuration
+default_profile: null  # Use default AWS profile if not specified
+aws_region: "us-east-1"
+
+# Cache Configuration
+cache_ttl: 3600  # Cache TTL in seconds (1 hour)
+cache_directory: "~/.aws-cost-cli/cache"
+
+# Output Configuration
+output_format: "simple"  # simple, detailed, json
+default_currency: "USD"
+date_format: "%Y-%m-%d"
+
+# Query Configuration
+default_granularity: "MONTHLY"
+max_results: 100
+
+# Environment Variables Required:
+# export GEMINI_API_KEY="your-gemini-api-key-here"
+# 
+# Optional environment variables:
+# export OPENAI_API_KEY="sk-your-openai-key-here"  # For fallback
+# export AWS_COST_CLI_LLM_PROVIDER="gemini"        # Override default

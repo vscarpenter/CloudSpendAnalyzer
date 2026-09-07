@@ -6,15 +6,14 @@ This comprehensive guide will help you master the AWS Cost Explorer CLI tool and
 
 1. [Getting Started](#getting-started)
 2. [Installation and Setup](#installation-and-setup)
-3. [Health Monitoring and System Status](#health-monitoring-and-system-status)
+3. [Health Checks and System Status](#health-checks-and-system-status)
 4. [Basic Query Patterns](#basic-query-patterns)
 5. [Service-Specific Examples](#service-specific-examples)
 6. [Time-Based Analysis](#time-based-analysis)
 7. [Advanced Query Techniques](#advanced-query-techniques)
 8. [Configuration and Optimization](#configuration-and-optimization)
-9. [Enterprise Deployment](#enterprise-deployment)
-10. [Troubleshooting](#troubleshooting)
-11. [Best Practices](#best-practices)
+9. [Troubleshooting](#troubleshooting)
+10. [Best Practices](#best-practices)
 
 ## Getting Started
 
@@ -24,7 +23,7 @@ Before using the AWS Cost Explorer CLI, ensure you have:
 
 1. **AWS CLI configured** with appropriate permissions
 2. **Cost Explorer enabled** in your AWS account (may incur charges)
-3. **LLM provider configured** (OpenAI, Anthropic, Bedrock, or Ollama)
+3. **LLM provider configured** (Ollama, OpenAI, Anthropic, Bedrock, or Gemini)
 4. **Python 3.8+** installed
 
 ### First Query
@@ -42,65 +41,450 @@ This basic query will:
 
 ## Installation and Setup
 
-### Standard Installation
-
-For basic usage and development:
+### Installation
 
 ```bash
 # Install the package with core dependencies
 uv pip install -e .
 
-# Or install with development tools
+# Or install with development tools (pytest, black, flake8, mypy)
 uv pip install -e .[dev]
 ```
 
-### Production Installation
+Core dependencies are boto3, click, rich, pyyaml, openai, anthropic, google-generativeai, and requests.
 
-For production deployments, use the production-optimized dependencies:
+## LLM Provider Configuration
+
+The CLI supports five LLM providers with Ollama as the default for local, private processing.
+
+### Provider Overview
+
+| Provider | Type | API Key Required | Best For |
+|----------|------|------------------|----------|
+| **Ollama** | Local | ❌ No | Privacy, offline use, no costs |
+| **Gemini** | Cloud | ✅ Yes | Fast, cost-effective queries |
+| **OpenAI** | Cloud | ✅ Yes | Reliable, well-tested |
+| **Anthropic** | Cloud | ✅ Yes | Complex analysis, safety |
+| **Bedrock** | AWS | ❌ AWS Creds | AWS-native integration |
+
+### 1. Ollama (Default - Recommended)
+
+**Advantages:** No API keys, private, offline capable, no per-query costs
+**Setup:**
 
 ```bash
-# Install production dependencies for better performance
-uv pip install -r requirements-prod.txt
+# Install Ollama
+brew install ollama  # macOS
+# or visit https://ollama.ai/download for other platforms
 
-# Then install the main package
-uv pip install -e .
+# Start Ollama service
+ollama serve
+
+# Pull a model (choose one)
+ollama pull llama2        # 7B model, good balance
+ollama pull llama2:13b    # 13B model, better quality
+ollama pull codellama     # Specialized for code
+
+# Configure (default provider)
+aws-cost-cli configure --provider ollama --model llama2
 ```
 
-**Production dependencies include:**
-- High-performance ASGI/WSGI servers (uvicorn, gunicorn)
-- Enhanced logging and monitoring tools
-- Database drivers (PostgreSQL, Redis)
-- Security and SSL/TLS support
-- Process management tools
+### 2. Google Gemini
 
-### Development vs Production Dependencies
-
-| Dependency Type | Development | Production |
-|----------------|-------------|------------|
-| **Core Features** | ✅ Basic functionality | ✅ All features + optimizations |
-| **Performance** | Standard | High-performance servers & pooling |
-| **Monitoring** | Basic logging | Structured logging + metrics |
-| **Database** | File-based cache | PostgreSQL + Redis support |
-| **Security** | Standard | Enhanced SSL/TLS + encryption |
-| **Deployment** | Local development | Production-ready servers |
-
-## Health Monitoring and System Status
-
-The CLI includes comprehensive health monitoring capabilities for production deployments and troubleshooting.
-
-### Basic Health Checks
-
-Check the overall system health:
+**Advantages:** Fast responses, cost-effective, good quality, excellent for cost analysis
+**Setup:**
 
 ```bash
-# Quick health check
-aws-cost-cli health check
+# Get API key from https://makersuite.google.com/app/apikey
+export GEMINI_API_KEY="your-api-key-here"
 
-# Detailed health check with system metrics
-aws-cost-cli health check --detailed
+# Configure Gemini with default model
+aws-cost-cli configure --provider gemini --model gemini-1.5-flash
+
+# Test configuration
+aws-cost-cli providers test gemini
+
+# Verify API key is working
+aws-cost-cli query "test query" --llm-provider gemini
+```
+
+**Available Models:**
+- `gemini-1.5-flash` - Fast and cost-effective (default, recommended)
+- `gemini-1.5-pro` - More capable, higher cost, better for complex analysis
+
+**Configuration Options:**
+```bash
+# Basic configuration (uses default model)
+aws-cost-cli configure --provider gemini
+
+# With specific model
+aws-cost-cli configure --provider gemini --model gemini-1.5-pro
+
+# With custom temperature (0.0-1.0, lower = more consistent)
+aws-cost-cli configure --provider gemini --temperature 0.1
+
+# Test different models
+aws-cost-cli query "EC2 costs last month" --llm-provider gemini
+```
+
+**Gemini-Specific Features:**
+- **Fast Processing:** Typically 2-3x faster than other cloud providers
+- **Cost Effective:** Lower per-query costs compared to OpenAI/Anthropic
+- **Good Context:** Handles complex cost queries with multiple parameters
+- **JSON Parsing:** Excellent at extracting structured data from natural language
+
+**Best Use Cases:**
+- High-volume cost analysis queries
+- Real-time cost monitoring dashboards
+- Cost optimization analysis
+- Budget tracking and alerts
+
+### 3. OpenAI
+
+**Advantages:** Reliable, well-documented, consistent results
+**Setup:**
+
+```bash
+# Get API key from https://platform.openai.com/api-keys
+export OPENAI_API_KEY="sk-your-key-here"
+
+# Configure OpenAI
+aws-cost-cli configure --provider openai --model gpt-3.5-turbo
+
+# Test configuration
+aws-cost-cli providers test openai
+```
+
+### 4. Anthropic Claude
+
+**Advantages:** Excellent for complex analysis, safety-focused
+**Setup:**
+
+```bash
+# Get API key from https://console.anthropic.com/
+export ANTHROPIC_API_KEY="sk-ant-your-key-here"
+
+# Configure Anthropic
+aws-cost-cli configure --provider anthropic --model claude-3-haiku-20240307
+
+# Test configuration
+aws-cost-cli providers test anthropic
+```
+
+### 5. AWS Bedrock
+
+**Advantages:** AWS-native, uses existing AWS credentials
+**Setup:**
+
+```bash
+# Ensure AWS credentials are configured
+aws configure
+
+# Configure Bedrock
+aws-cost-cli configure --provider bedrock --region us-east-1
+
+# Test configuration
+aws-cost-cli providers test bedrock
+```
+
+### Provider Management Commands
+
+```bash
+# List all providers and their status
+aws-cost-cli providers list
+
+# Test specific provider
+aws-cost-cli providers test gemini
+aws-cost-cli providers test ollama
+aws-cost-cli providers test openai
+
+# Override provider for single query (doesn't change config)
+aws-cost-cli query "EC2 costs" --llm-provider gemini
+aws-cost-cli query "EC2 costs" --llm-provider ollama
+
+# Check current configuration
+aws-cost-cli show-config
+
+# Change default provider permanently
+aws-cost-cli configure --provider gemini
+aws-cost-cli configure --provider ollama
+```
+
+### Advanced Provider Switching
+
+**Scenario-Based Provider Selection:**
+
+```bash
+# For privacy-sensitive queries (local processing)
+aws-cost-cli query "detailed cost breakdown" --llm-provider ollama
+
+# For fast, cost-effective queries (cloud)
+aws-cost-cli query "monthly spending summary" --llm-provider gemini
+
+# For complex analysis requiring reasoning
+aws-cost-cli query "cost optimization recommendations" --llm-provider anthropic
+
+# For AWS-native integration
+aws-cost-cli query "cross-account cost analysis" --llm-provider bedrock
+
+# For reliable, consistent results
+aws-cost-cli query "budget variance analysis" --llm-provider openai
+```
+
+**Provider Performance Comparison:**
+
+```bash
+# Compare response times across providers
+time aws-cost-cli query "EC2 costs last month" --llm-provider ollama
+time aws-cost-cli query "EC2 costs last month" --llm-provider gemini
+time aws-cost-cli query "EC2 costs last month" --llm-provider openai
+
+# Test provider availability
+aws-cost-cli providers test ollama && echo "Ollama: Available"
+aws-cost-cli providers test gemini && echo "Gemini: Available"
+aws-cost-cli providers test openai && echo "OpenAI: Available"
+```
+
+**Batch Provider Testing:**
+
+```bash
+# Test all configured providers
+for provider in ollama gemini openai anthropic bedrock; do
+  echo "Testing $provider..."
+  aws-cost-cli providers test $provider
+done
+
+# Find fastest provider for your setup
+echo "Provider speed test:"
+for provider in ollama gemini openai; do
+  echo -n "$provider: "
+  time aws-cost-cli query "test" --llm-provider $provider >/dev/null 2>&1
+done
+```
+
+### Fallback Configuration
+
+Configure automatic fallback when your primary provider fails:
+
+```yaml
+# In your config file
+llm_provider: "gemini"
+fallback_providers:
+  - "ollama"    # Local fallback
+  - "openai"    # Cloud fallback
+  - "anthropic" # Additional fallback
+```
+
+## CLI Command Reference
+
+### Core Commands
+
+#### Query Command
+
+The main command for asking cost-related questions:
+
+```bash
+# Basic usage
+aws-cost-cli query "What did I spend on EC2 last month?"
+
+# With provider override
+aws-cost-cli query "S3 costs this year" --llm-provider gemini
+
+# With output format
+aws-cost-cli query "RDS costs" --format json
+
+# With AWS profile
+aws-cost-cli query "Lambda costs" --profile production
+
+# With fresh data (bypass cache)
+aws-cost-cli query "All costs 2024" --fresh
+```
+
+**Query Command Options:**
+- `--llm-provider`: Override LLM provider (ollama, gemini, openai, anthropic, bedrock)
+- `--format`: Output format (simple, rich, json, llm)
+- `--profile` / `-p`: AWS profile to use
+- `--fresh` / `-f`: Force fresh data retrieval, bypassing the cache
+- `--config-file` / `-c`: Path to a configuration file
+
+#### Configuration Commands
+
+```bash
+# Configure LLM provider
+aws-cost-cli configure --provider gemini --model gemini-1.5-flash
+
+# Configure with API key
+aws-cost-cli configure --provider openai --api-key sk-your-key
+
+# Configure AWS profile
+aws-cost-cli configure --profile production
+
+# Configure cache settings
+aws-cost-cli configure --cache-ttl 3600
+
+# Show current configuration (API keys masked)
+aws-cost-cli show-config
+```
+
+#### Provider Management Commands
+
+```bash
+# List all providers and their status
+aws-cost-cli providers list
+
+# Test a specific provider
+aws-cost-cli providers test gemini
+aws-cost-cli providers test ollama
+
+# Check provider health
+aws-cost-cli providers health
+
+# View LLM provider performance metrics
+aws-cost-cli providers performance
+
+# Reset provider performance metrics
+aws-cost-cli providers reset
+
+# Test the configured provider end to end
+aws-cost-cli test
+```
+
+#### Health Command
+
+```bash
+# One-shot health check (AWS credentials + cache directory)
+aws-cost-cli health
 
 # JSON output for monitoring systems
-aws-cost-cli health check --json
+aws-cost-cli health --json
+```
+
+#### Cache Management Commands
+
+```bash
+# Show cache statistics
+aws-cost-cli cache-stats
+
+# Pre-warm the cache with common queries
+aws-cost-cli warm-cache
+
+# Remove expired cache entries
+aws-cost-cli cleanup-cache
+
+# Clear the cache (optionally by pattern)
+aws-cost-cli clear-cache
+aws-cost-cli clear-cache --pattern "EC2*"
+```
+
+#### Profile Management Commands
+
+```bash
+# List AWS profiles
+aws-cost-cli list-profiles
+
+# Use a specific profile for a query
+aws-cost-cli query "EC2 costs last month" --profile production
+```
+
+### Command Examples by Use Case
+
+#### Daily Cost Monitoring
+
+```bash
+# Morning cost check
+aws-cost-cli query "How much have I spent on AWS today?"
+
+# Weekly summary
+aws-cost-cli query "What was my AWS spending this week compared to last week?"
+
+# Monthly budget check
+aws-cost-cli query "Am I on track for my monthly AWS budget of $5000?"
+```
+
+#### Cost Analysis and Optimization
+
+```bash
+# Service breakdown
+aws-cost-cli query "What are my top 10 AWS services by cost this month?"
+
+# Monthly breakdown
+aws-cost-cli query "Show me monthly costs for the last 6 months"
+
+# Optimization opportunities
+aws-cost-cli query "What are my biggest cost optimization opportunities?"
+
+# Regional analysis
+aws-cost-cli query "Compare AWS costs between us-east-1 and eu-west-1"
+```
+
+#### Provider-Specific Workflows
+
+```bash
+# Privacy-focused analysis (local processing)
+aws-cost-cli query "Detailed cost breakdown with sensitive data" --llm-provider ollama
+
+# Fast cloud analysis
+aws-cost-cli query "Quick monthly summary" --llm-provider gemini
+
+# Complex analysis requiring reasoning
+aws-cost-cli query "Cost optimization strategy recommendations" --llm-provider anthropic
+
+# AWS-native integration
+aws-cost-cli query "Cross-account cost analysis" --llm-provider bedrock
+```
+
+#### Troubleshooting and Testing
+
+```bash
+# Test system health
+aws-cost-cli health
+
+# Test all providers
+for provider in ollama gemini openai anthropic bedrock; do
+  echo "Testing $provider..."
+  aws-cost-cli providers test $provider
+done
+
+# Compare provider response times
+time aws-cost-cli query "EC2 costs" --llm-provider ollama
+time aws-cost-cli query "EC2 costs" --llm-provider gemini
+```
+
+### Environment Variables Reference
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `AWS_COST_CLI_LLM_PROVIDER` | Default LLM provider | `ollama` | `gemini` |
+| `AWS_COST_CLI_DEFAULT_PROFILE` | Default AWS profile | None | `production` |
+| `AWS_COST_CLI_CACHE_TTL` | Cache TTL in seconds | `3600` | `7200` |
+| `AWS_COST_CLI_OUTPUT_FORMAT` | Default output format | `simple` | `rich` |
+| `GEMINI_API_KEY` | Google Gemini API key | None | `your-api-key` |
+| `OPENAI_API_KEY` | OpenAI API key | None | `sk-your-key` |
+| `ANTHROPIC_API_KEY` | Anthropic API key | None | `sk-ant-your-key` |
+
+### Exit Codes
+
+The CLI returns standard exit codes for scripting:
+
+- `0`: Success
+- `1`: General error (invalid arguments, configuration issues)
+- `2`: AWS API error (credentials, permissions, service issues)
+- `3`: LLM provider error (API key, quota, network issues)
+- `4`: Cache error (disk space, permissions)
+- `5`: Health check failure (system unhealthy)
+
+## Health Checks and System Status
+
+The CLI includes a one-shot `health` command for quick diagnostics.
+
+### Running a Health Check
+
+```bash
+# Check AWS credentials and cache directory
+aws-cost-cli health
+
+# JSON output for monitoring systems
+aws-cost-cli health --json
 ```
 
 **Example output:**
@@ -108,106 +492,24 @@ aws-cost-cli health check --json
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ ✅ System Status: HEALTHY                                                      ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Component     ┃ Status     ┃ Details                                                          ┃
-┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ System        │ ✅ healthy │ OK                                                               │
-│ Aws           │ ✅ healthy │ Response: 245ms                                                  │
-│ Cache         │ ✅ healthy │ Size: 15.2MB; Response: 2ms                                     │
-│ Llm           │ ✅ healthy │ OK                                                               │
-└───────────────┴────────────┴──────────────────────────────────────────────────────────────┘
-
-📊 Summary: 4/4 checks healthy
-⏱️  Uptime: 45.2 seconds
-```
-
-### Readiness Checks
-
-For container orchestration and load balancers:
-
-```bash
-# Check if application is ready to serve requests
-aws-cost-cli health ready
-
-# JSON output for Kubernetes probes
-aws-cost-cli health ready --json
-```
-
-### Health Check Server
-
-Start an HTTP server for monitoring endpoints (ideal for containers):
-
-```bash
-# Start health check server
-aws-cost-cli health serve --port 8081
-
-# Bind to specific host
-aws-cost-cli health serve --host 0.0.0.0 --port 8081
-```
-
-**Available endpoints:**
-- `GET /health` - Basic health check
-- `GET /health/detailed` - Detailed health with metrics
-- `GET /ready` - Readiness probe
-- `GET /metrics` - Prometheus metrics
-
-### Monitoring Integration
-
-#### Docker/Kubernetes Health Checks
-
-```yaml
-# Kubernetes deployment example
-spec:
-  containers:
-  - name: aws-cost-cli
-    image: your-registry/aws-cost-cli:latest
-    ports:
-    - containerPort: 8081
-    livenessProbe:
-      httpGet:
-        path: /health
-        port: 8081
-      initialDelaySeconds: 30
-      periodSeconds: 10
-    readinessProbe:
-      httpGet:
-        path: /ready
-        port: 8081
-      initialDelaySeconds: 5
-      periodSeconds: 5
-```
-
-#### Prometheus Monitoring
-
-```yaml
-# Prometheus scrape config
-scrape_configs:
-  - job_name: 'aws-cost-cli'
-    static_configs:
-      - targets: ['your-service:8081']
-    metrics_path: '/metrics'
-    scrape_interval: 30s
+  ✅ aws: AWS credentials valid
+  ✅ cache: Cache directory writable
 ```
 
 ### Health Check Components
 
-The health monitoring system checks:
+The `health` command verifies:
 
 | Component | Description | Healthy State |
 |-----------|-------------|---------------|
-| **System** | CPU, memory, disk usage | < 80% utilization |
-| **AWS** | API connectivity and permissions | < 1s response time |
-| **Cache** | File system access and performance | Read/write operations work |
-| **LLM** | Provider API key availability | API keys configured |
-| **Database** | Connection and query performance | < 100ms queries |
+| **AWS** | Credential validity and Cost Explorer access | Credentials valid |
+| **Cache** | Cache directory access | Read/write operations work |
 
-### Status Codes
+### Exit Codes
 
-Health check commands return appropriate exit codes:
+The `health` command returns:
 - `0` - Healthy
-- `1` - Unhealthy (critical issues)
-- `2` - Degraded (warnings, but functional)
+- `1` - Unhealthy (one or more checks failed)
 
 ## Basic Query Patterns
 
@@ -456,8 +758,8 @@ aws-cost-cli query "How much have I spent on AWS this month so far?"
 # Month-over-month comparison
 aws-cost-cli query "Compare this month's AWS spending to last month"
 
-# Monthly spending trend
-aws-cost-cli query "Show my monthly AWS spending trend for the last 12 months"
+# Monthly spending breakdown
+aws-cost-cli query "Show my monthly AWS spending for the last 12 months"
 
 # Seasonal spending patterns
 aws-cost-cli query "What are my seasonal AWS spending patterns over the last 2 years?"
@@ -478,8 +780,8 @@ aws-cost-cli query "Compare Q4 2024 spending to Q3 2024"
 # Quarterly service breakdown
 aws-cost-cli query "Show me quarterly spending breakdown by service for 2024"
 
-# Quarterly cost trends
-aws-cost-cli query "What are the quarterly cost trends for my top 5 AWS services?"
+# Quarterly costs by service
+aws-cost-cli query "What were the quarterly costs for my top 5 AWS services in 2024?"
 ```
 
 ### Daily and Weekly Analysis
@@ -488,7 +790,7 @@ aws-cost-cli query "What are the quarterly cost trends for my top 5 AWS services
 # Daily spending patterns
 aws-cost-cli query "Show me daily AWS spending for the last 30 days"
 
-# Weekly spending trends
+# Weekly spending patterns
 aws-cost-cli query "What are my weekly AWS spending patterns this month?"
 
 # Weekend vs weekday costs
@@ -548,22 +850,6 @@ aws-cost-cli query "What are my EC2 right-sizing opportunities based on cost ana
 aws-cost-cli query "Were there any unusual cost spikes last month?"
 ```
 
-### Budget and Forecasting
-
-```bash
-# Cost forecasting
-aws-cost-cli query "Based on current trends, what will my AWS costs be next month?"
-
-# Budget variance analysis
-aws-cost-cli query "How does my actual spending compare to my $10000 monthly budget?"
-
-# Cost projection
-aws-cost-cli query "Project my annual AWS costs based on the last 6 months"
-
-# Service growth forecasting
-aws-cost-cli query "Which services are likely to drive cost growth next quarter?"
-```
-
 ## Enterprise Deployment
 
 The AWS Cost CLI provides enterprise-grade configuration templates and deployment options for large organizations.
@@ -610,21 +896,14 @@ For production deployments:
 # Copy production template
 cp config/templates/production.yaml ~/.aws-cost-cli/config.yaml
 
-# Install production dependencies
-pip install -r requirements-prod.txt
-
 # Set required environment variables
-export AWS_COST_CLI_DB_PASSWORD="your-secure-password"
 export ANTHROPIC_API_KEY="your-anthropic-key"
 ```
 
 **Production template features:**
-- High-performance connection pooling (100+ connections)
-- PostgreSQL database integration
-- Comprehensive health checks and monitoring
-- Circuit breaker patterns for resilience
-- Structured JSON logging
-- Resource limits and security controls
+- Shorter cache TTL for fresher data
+- Stricter security settings
+- Structured logging
 
 ### Multi-Account Enterprise Setup
 
@@ -691,17 +970,17 @@ export AWS_COST_CLI_DB_PASSWORD="your-db-password"
 After setting up your configuration:
 
 ```bash
-# Validate configuration syntax
-aws-cost-cli config validate
+# Review the loaded configuration (API keys masked)
+aws-cost-cli show-config
 
-# Test database connectivity (if enabled)
-aws-cost-cli config test-db
+# Test LLM provider connectivity
+aws-cost-cli providers test gemini
 
-# Test LLM provider connectivity  
-aws-cost-cli config test-llm
+# End-to-end test of the configured provider
+aws-cost-cli test
 
-# Comprehensive system test
-aws-cost-cli health check --detailed
+# Health check (AWS credentials + cache directory)
+aws-cost-cli health
 ```
 
 ### Security Best Practices
@@ -714,9 +993,10 @@ Never commit sensitive information to version control:
 # Database credentials
 export AWS_COST_CLI_DB_PASSWORD="secure-password"
 
-# LLM API keys
+# LLM API keys (choose providers you want to use)
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
+export GEMINI_API_KEY="your-gemini-api-key"
 
 # AWS credentials (if not using profiles)
 export AWS_ACCESS_KEY_ID="your-access-key"
@@ -748,111 +1028,24 @@ For production environments:
 
 #### Docker Example
 
+The CLI is a one-shot command-line tool, so a container typically runs a single query (for example, on a schedule) rather than a long-running service.
+
 ```dockerfile
 FROM python:3.11-slim
-
-# Install production dependencies
-COPY requirements-prod.txt .
-RUN pip install -r requirements-prod.txt
 
 # Install application
 COPY . /app
 WORKDIR /app
 RUN pip install -e .
 
-# Health check configuration
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s \
-  CMD aws-cost-cli health ready || exit 1
+# Optional: validate the image can reach AWS and the cache directory
+RUN aws-cost-cli health || true
 
-# Expose health check port
-EXPOSE 8081
-
-# Start health check server
-CMD ["aws-cost-cli", "health", "serve", "--host", "0.0.0.0", "--port", "8081"]
+# Run a query by default (override CMD as needed)
+CMD ["aws-cost-cli", "query", "What did I spend on AWS last month?"]
 ```
 
-#### Kubernetes Deployment
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: aws-cost-cli
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: aws-cost-cli
-  template:
-    metadata:
-      labels:
-        app: aws-cost-cli
-    spec:
-      containers:
-      - name: aws-cost-cli
-        image: your-registry/aws-cost-cli:latest
-        ports:
-        - containerPort: 8081
-        env:
-        - name: AWS_COST_CLI_DB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: aws-cost-cli-secrets
-              key: db-password
-        - name: ANTHROPIC_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: aws-cost-cli-secrets  
-              key: anthropic-api-key
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8081
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 8081
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
-```
-
-### Monitoring and Alerting
-
-#### Prometheus Integration
-
-```yaml
-# ServiceMonitor for Prometheus Operator
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: aws-cost-cli
-spec:
-  selector:
-    matchLabels:
-      app: aws-cost-cli
-  endpoints:
-  - port: health
-    path: /metrics
-    interval: 30s
-```
-
-#### Grafana Dashboard
-
-Key metrics to monitor:
-- Query response times
-- Cache hit ratios
-- AWS API call frequency
-- System resource usage
-- Error rates by component
+To run a scheduled query in Kubernetes, use a `CronJob` that invokes `aws-cost-cli query ...`, supplying AWS credentials and any provider API keys via secrets and environment variables.
 
 ## Configuration and Optimization
 
@@ -873,10 +1066,10 @@ aws-cost-cli configure --default-profile production
 
 ```bash
 # Clear cache for fresh data
-aws-cost-cli cache clear
+aws-cost-cli clear-cache
 
-# Check cache status
-aws-cost-cli cache status
+# Check cache statistics
+aws-cost-cli cache-stats
 
 # Set custom cache TTL (in seconds)
 aws-cost-cli configure --cache-ttl 7200  # 2 hours
@@ -885,30 +1078,36 @@ aws-cost-cli configure --cache-ttl 7200  # 2 hours
 ### LLM Provider Optimization
 
 ```bash
+# Default provider (local, no API key required)
+aws-cost-cli configure --provider ollama --model llama2
+
 # Switch LLM providers for different use cases
+aws-cost-cli configure --provider gemini     # Fast and cost-effective cloud option
 aws-cost-cli configure --provider anthropic  # Better for complex analysis
-aws-cost-cli configure --provider ollama     # For privacy-sensitive environments
+aws-cost-cli configure --provider openai     # Reliable cloud option
 aws-cost-cli configure --provider bedrock    # For AWS-native integration
 
 # Test LLM provider performance
-aws-cost-cli test --provider openai
+aws-cost-cli providers test ollama    # Test local provider
+aws-cost-cli providers test gemini    # Test Gemini provider
+aws-cost-cli providers test openai    # Test OpenAI provider
+
+# Override provider for single query
+aws-cost-cli query "EC2 costs last month" --llm-provider gemini
 ```
 
 ## Troubleshooting
 
 ### System Diagnostics
 
-Start troubleshooting with comprehensive health checks:
+Start troubleshooting with the health check:
 
 ```bash
-# Run comprehensive system health check
-aws-cost-cli health check --detailed
+# Run the health check
+aws-cost-cli health
 
-# Check if system is ready to serve requests  
-aws-cost-cli health ready
-
-# Get system status in JSON format for analysis
-aws-cost-cli health check --json
+# Get status in JSON format for analysis
+aws-cost-cli health --json
 ```
 
 ### Common Issues and Solutions
@@ -916,18 +1115,14 @@ aws-cost-cli health check --json
 #### 1. System Health Issues
 
 ```bash
-# Check overall system health first
-aws-cost-cli health check
+# Check overall health first
+aws-cost-cli health
 
-# Identify specific component failures
-aws-cost-cli health check --detailed --json | jq '.checks'
-
-# Monitor system resources
-aws-cost-cli health check --detailed | grep -E "(cpu|memory|disk)"
+# Inspect individual check results
+aws-cost-cli health --json | jq '.checks'
 ```
 
 **Common system issues:**
-- **High CPU/Memory**: Reduce concurrent queries or increase system resources
 - **Cache issues**: Check disk space and permissions in `~/.aws-cost-cli/cache`
 - **Network connectivity**: Verify internet connection and firewall settings
 
@@ -944,23 +1139,169 @@ aws-cost-cli list-profiles
 aws-cost-cli query "test query" --profile your-profile-name
 
 # Run health check to verify AWS connectivity
-aws-cost-cli health check | grep -i aws
+aws-cost-cli health | grep -i aws
 ```
 
 #### 3. LLM Provider Issues
+
+**General Provider Troubleshooting:**
 
 ```bash
 # Test LLM connectivity
 aws-cost-cli test
 
 # Check API key configuration
-aws-cost-cli config show
+aws-cost-cli show-config
 
-# Switch to alternative provider
-aws-cost-cli configure --provider ollama  # Local fallback
+# List all providers and their status
+aws-cost-cli providers list
 
-# Check LLM provider status in health check
-aws-cost-cli health check | grep -i llm
+# Check LLM provider health
+aws-cost-cli providers health
+```
+
+**Provider-Specific Troubleshooting:**
+
+##### Ollama (Local Provider - Default)
+
+```bash
+# Check if Ollama is running
+curl http://localhost:11434/api/version
+
+# Start Ollama if not running
+ollama serve
+
+# Check available models
+ollama list
+
+# Download a model if none available
+ollama pull llama2
+
+# Test Ollama provider
+aws-cost-cli providers test ollama
+
+# Configure Ollama with specific model
+aws-cost-cli configure --provider ollama --model llama2
+
+# Troubleshoot Ollama connection issues
+ps aux | grep ollama  # Check if process is running
+netstat -an | grep 11434  # Check if port is open
+```
+
+**Common Ollama Issues:**
+- **"Connection refused"**: Ollama service not running → Run `ollama serve`
+- **"Model not found"**: No models downloaded → Run `ollama pull llama2`
+- **Slow responses**: Model too large for hardware → Use smaller model like `llama2:7b-chat`
+- **High memory usage**: Large model loaded → Use smaller model or increase system RAM
+
+##### Google Gemini
+
+```bash
+# Check if API key is set
+echo $GEMINI_API_KEY
+
+# Set API key if missing
+export GEMINI_API_KEY="your-api-key-here"
+
+# Test Gemini provider
+aws-cost-cli providers test gemini
+
+# Configure Gemini
+aws-cost-cli configure --provider gemini --model gemini-1.5-flash
+
+# Test with specific query
+aws-cost-cli query "test query" --llm-provider gemini
+```
+
+**Common Gemini Issues:**
+- **"Invalid API key"**: Wrong/expired key → Get new key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+- **"Package not installed"**: Missing dependency → Run `pip install google-generativeai>=0.3.0`
+- **"Quota exceeded"**: API limits reached → Check usage in Google AI Studio or switch provider
+- **"Model not found"**: Invalid model name → Use `gemini-1.5-flash` or `gemini-1.5-pro`
+
+##### OpenAI
+
+```bash
+# Check if API key is set
+echo $OPENAI_API_KEY
+
+# Set API key if missing
+export OPENAI_API_KEY="sk-your-key-here"
+
+# Test OpenAI provider
+aws-cost-cli providers test openai
+
+# Configure OpenAI
+aws-cost-cli configure --provider openai --model gpt-3.5-turbo
+```
+
+**Common OpenAI Issues:**
+- **"Invalid API key"**: Wrong/expired key → Get new key from [OpenAI Platform](https://platform.openai.com/api-keys)
+- **"Quota exceeded"**: Usage limits reached → Check billing in OpenAI dashboard
+- **"Model not found"**: Invalid model → Use `gpt-3.5-turbo` or `gpt-4`
+- **"Rate limit exceeded"**: Too many requests → Wait or upgrade plan
+
+##### Anthropic Claude
+
+```bash
+# Check if API key is set
+echo $ANTHROPIC_API_KEY
+
+# Set API key if missing
+export ANTHROPIC_API_KEY="sk-ant-your-key-here"
+
+# Test Anthropic provider
+aws-cost-cli providers test anthropic
+
+# Configure Anthropic
+aws-cost-cli configure --provider anthropic --model claude-3-haiku-20240307
+```
+
+**Common Anthropic Issues:**
+- **"Invalid API key"**: Wrong/expired key → Get new key from [Anthropic Console](https://console.anthropic.com/)
+- **"Usage limit exceeded"**: Monthly limits reached → Check usage in Anthropic console
+- **"Model not available"**: Invalid model → Use `claude-3-haiku-20240307` or `claude-3-sonnet-20240229`
+
+##### AWS Bedrock
+
+```bash
+# Check AWS credentials
+aws sts get-caller-identity
+
+# Test Bedrock provider
+aws-cost-cli providers test bedrock
+
+# Configure Bedrock
+aws-cost-cli configure --provider bedrock --region us-east-1
+
+# Check Bedrock permissions
+aws bedrock list-foundation-models --region us-east-1
+```
+
+**Common Bedrock Issues:**
+- **"Access denied"**: Missing IAM permissions → Add `bedrock:InvokeModel` permission
+- **"Region not supported"**: Bedrock not available → Use `us-east-1` or `us-west-2`
+- **"Model not found"**: Invalid model ID → Use `anthropic.claude-3-haiku-20240307-v1:0`
+- **"Credentials not found"**: AWS credentials not configured → Run `aws configure`
+
+**Provider Fallback Troubleshooting:**
+
+```bash
+# Test fallback configuration
+aws-cost-cli show-config | grep -A5 fallback
+
+# Test each fallback provider
+aws-cost-cli providers test ollama
+aws-cost-cli providers test gemini
+aws-cost-cli providers test openai
+
+# Force fallback by disabling primary provider
+aws-cost-cli query "test" --llm-provider nonexistent  # Should fallback
+
+# Configure robust fallback chain
+aws-cost-cli configure --provider gemini
+# Then edit config file to add:
+# fallback_providers: ["ollama", "openai", "anthropic"]
 ```
 
 #### 4. Cost Explorer Access
@@ -1011,7 +1352,7 @@ aws-cost-cli query "What services did I use last month that cost me money?"
 aws-cost-cli query "EC2 costs" --debug
 
 # Check configuration
-aws-cost-cli config show --debug
+aws-cost-cli show-config --debug
 
 # Test all components
 aws-cost-cli test --debug
@@ -1045,22 +1386,19 @@ aws-cost-cli query "How much have I spent on AWS today?"
 aws-cost-cli query "What was my AWS spending this week?"
 
 # Monthly review
-aws-cost-cli query "Show me monthly spending trends and top services"
+aws-cost-cli query "Show me monthly spending and top services"
 
 # Quarterly planning
-aws-cost-cli query "What are my quarterly cost trends and forecasts?"
+aws-cost-cli query "What were my quarterly costs by service this year?"
 ```
 
 #### System Health Monitoring
 ```bash
 # Daily health check (add to cron)
-aws-cost-cli health check --json > /var/log/aws-cost-cli-health.log
+aws-cost-cli health --json > /var/log/aws-cost-cli-health.log
 
-# Production monitoring with alerting
-aws-cost-cli health check || echo "Health check failed" | mail -s "AWS Cost CLI Alert" ops@company.com
-
-# Container readiness monitoring
-aws-cost-cli health ready || exit 1
+# Alert if the health check fails
+aws-cost-cli health || echo "Health check failed" | mail -s "AWS Cost CLI Alert" ops@company.com
 ```
 
 ### 4. Security and Privacy
@@ -1078,7 +1416,10 @@ aws-cost-cli health ready || exit 1
 
 - **Use caching** for repeated queries (configure appropriate TTL)
 - **Batch similar queries** together to reduce API calls
-- **Choose appropriate LLM provider** for your use case (cost vs. accuracy)
+- **Choose appropriate LLM provider** for your use case:
+  - **Ollama** (default): Local processing, no API costs, privacy-focused
+  - **Gemini**: Fast cloud processing, cost-effective
+  - **OpenAI/Anthropic**: Premium cloud options for complex analysis
 - **Monitor API usage** and costs regularly
 - **Use production dependencies** for high-performance deployments
 - **Configure connection pooling** for better AWS API performance
@@ -1104,11 +1445,8 @@ export AWS_COST_CLI_LOG_LEVEL=DEBUG
 # Use production template for reliability
 cp config/templates/production.yaml ~/.aws-cost-cli/config.yaml
 
-# Install production dependencies
-pip install -r requirements-prod.txt
-
-# Configure health monitoring
-aws-cost-cli health serve --host 0.0.0.0 --port 8081 &
+# Verify the setup with a health check
+aws-cost-cli health
 ```
 
 #### Multi-Account Enterprise
@@ -1151,21 +1489,21 @@ aws-cost-cli query "Compare production vs development environment costs"
 ### 2. Financial Planning
 
 ```bash
-# Annual budget planning
-aws-cost-cli query "Based on growth trends, what should our AWS budget be for 2025?"
+# Annual spending review
+aws-cost-cli query "What was our total AWS spending for 2024 by service?"
 
 # Cost center analysis
 aws-cost-cli query "Show cost breakdown by business unit for financial reporting"
 
-# ROI analysis
-aws-cost-cli query "What are the cost trends for our revenue-generating services?"
+# Service cost analysis
+aws-cost-cli query "What are the monthly costs for our revenue-generating services?"
 ```
 
 ### 3. Compliance and Reporting
 
 ```bash
 # Monthly executive summary
-aws-cost-cli query "Create an executive summary of AWS costs and trends this month"
+aws-cost-cli query "Create an executive summary of AWS costs this month"
 
 # Audit trail
 aws-cost-cli query "Show detailed cost breakdown for compliance reporting"

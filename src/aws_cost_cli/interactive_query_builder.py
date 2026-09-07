@@ -13,7 +13,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.text import Text
 
-from .models import TimePeriodGranularity, MetricType, DateRangeType, TrendAnalysisType
+from .models import TimePeriodGranularity, MetricType, DateRangeType
 from .query_processor import QueryParser
 from .exceptions import ValidationError, QueryParsingError
 
@@ -136,13 +136,6 @@ class QueryTemplateManager:
                 template="How do this year's costs compare to last year?",
                 category="comparison",
             ),
-            QueryTemplate(
-                name="Service Cost Trends",
-                description="Get cost trends for a specific service",
-                template="Show me {service} cost trends for the last 6 months",
-                category="comparison",
-                parameters={"service": "EC2"},
-            ),
             # Analysis queries
             QueryTemplate(
                 name="Service Breakdown",
@@ -157,12 +150,6 @@ class QueryTemplateManager:
                 template="What are my top 5 most expensive services {period}?",
                 category="analysis",
                 parameters={"period": "this year"},
-            ),
-            QueryTemplate(
-                name="Cost Forecast",
-                description="Get cost forecast for upcoming months",
-                template="What will my costs be for the next 3 months?",
-                category="analysis",
             ),
             # Budget and optimization
             QueryTemplate(
@@ -521,140 +508,31 @@ class InteractiveQueryBuilder:
 
         while True:
             self.console.print("\n📋 What would you like to do?")
-            self.console.print("1. Build a new query from scratch")
-            self.console.print("2. Use a query template")
-            self.console.print("3. Browse query history")
-            self.console.print("4. Manage favorites")
-            self.console.print("5. Validate a query")
-            self.console.print("6. Exit")
+            self.console.print("1. Use a query template")
+            self.console.print("2. Browse query history")
+            self.console.print("3. Manage favorites")
+            self.console.print("4. Validate a query")
+            self.console.print("5. Exit")
 
             choice = Prompt.ask(
-                "Choose an option", choices=["1", "2", "3", "4", "5", "6"], default="1"
+                "Choose an option", choices=["1", "2", "3", "4", "5"], default="1"
             )
 
             if choice == "1":
-                query = self._build_query_from_scratch()
-                if query:
-                    return query
-            elif choice == "2":
                 query = self._use_template()
                 if query:
                     return query
-            elif choice == "3":
+            elif choice == "2":
                 query = self._browse_history()
                 if query:
                     return query
-            elif choice == "4":
+            elif choice == "3":
                 self._manage_favorites()
-            elif choice == "5":
+            elif choice == "4":
                 self._validate_query()
-            elif choice == "6":
+            elif choice == "5":
                 self.console.print("👋 Goodbye!")
                 return None
-
-    def _build_query_from_scratch(self) -> Optional[str]:
-        """Build a query from scratch with guided prompts."""
-        self.console.print(
-            Panel(
-                Text("🏗️  Building Query from Scratch", style="bold green"),
-                border_style="green",
-            )
-        )
-
-        # Step 1: What do you want to know?
-        self.console.print("\n🎯 What do you want to know about your AWS costs?")
-        intent = Prompt.ask(
-            "Describe what you're looking for", default="total spending"
-        )
-
-        # Step 2: Service selection
-        self.console.print("\n🔧 Which AWS service are you interested in?")
-        self.console.print(
-            "Leave blank for all services, or specify: EC2, S3, RDS, Lambda, etc."
-        )
-        service = Prompt.ask("Service (optional)").strip()
-
-        # Step 3: Time period
-        self.console.print("\n📅 What time period?")
-        self.console.print(
-            "Examples: 'last month', 'this year', 'Q3 2025', 'July 2025'"
-        )
-        time_period = Prompt.ask("Time period", default="last month")
-
-        # Step 4: Additional options
-        breakdown = Confirm.ask(
-            "\n📊 Do you want a breakdown by service?", default=False
-        )
-        comparison = Confirm.ask(
-            "📈 Do you want to compare to a previous period?", default=False
-        )
-
-        # Build the query
-        query_parts = []
-
-        if "total" in intent.lower() or "bill" in intent.lower():
-            if service:
-                query_parts.append(f"What did I spend on {service}")
-            else:
-                query_parts.append("What was my total AWS bill")
-        elif "cost" in intent.lower() or "spend" in intent.lower():
-            if service:
-                query_parts.append(f"How much did {service} cost me")
-            else:
-                query_parts.append("How much did I spend")
-        else:
-            if service:
-                query_parts.append(f"Show me {service} costs")
-            else:
-                query_parts.append("Show me my AWS costs")
-
-        query_parts.append(f"for {time_period}")
-
-        if breakdown:
-            query_parts.append("broken down by service")
-
-        if comparison:
-            if "month" in time_period.lower():
-                query_parts.append("compared to the previous month")
-            elif "year" in time_period.lower():
-                query_parts.append("compared to the previous year")
-            else:
-                query_parts.append("compared to the previous period")
-
-        query = " ".join(query_parts) + "?"
-
-        # Show the built query
-        self.console.print(
-            Panel(
-                Text(f"Built Query: {query}", style="bold yellow"),
-                title="Generated Query",
-                border_style="yellow",
-            )
-        )
-
-        # Validate the query
-        is_valid, warnings, suggestions = self.validator.validate_query(query)
-
-        if warnings:
-            self.console.print("\n⚠️  Validation Warnings:")
-            for warning in warnings:
-                self.console.print(f"   • {warning}")
-
-        if suggestions:
-            self.console.print("\n💡 Suggestions:")
-            for suggestion in suggestions:
-                self.console.print(f"   • {suggestion}")
-
-        # Ask for confirmation
-        if Confirm.ask("\n✅ Use this query?", default=True):
-            return query
-
-        # Allow manual editing
-        if Confirm.ask("📝 Would you like to edit the query manually?", default=True):
-            edited_query = Prompt.ask("Enter your query", default=query)
-            return edited_query
-
-        return None
 
     def _use_template(self) -> Optional[str]:
         """Use a query template."""

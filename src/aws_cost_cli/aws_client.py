@@ -24,7 +24,6 @@ from .models import (
     Group,
     TimePeriodGranularity,
     MetricType,
-    TrendAnalysisType,
 )
 from .exceptions import (
     AWSCredentialsError,
@@ -35,7 +34,6 @@ from .exceptions import (
     is_retryable_error,
     get_retry_delay,
 )
-from .performance import PerformanceOptimizedClient
 
 
 class CredentialManager:
@@ -174,10 +172,9 @@ class AWSCostClient:
         # Try cache first if enabled and cache manager is available
         if use_cache and self.cache_manager:
             try:
-                cache_key = self.cache_manager.generate_cache_key(
+                cached_data = self.cache_manager.get_cached_data(
                     params, self.profile or "default"
                 )
-                cached_data = self.cache_manager.get_cached_data(cache_key)
                 if cached_data:
                     return cached_data
             except CacheError:
@@ -201,10 +198,9 @@ class AWSCostClient:
                 # Cache the result if cache manager is available
                 if self.cache_manager:
                     try:
-                        cache_key = self.cache_manager.generate_cache_key(
-                            params, self.profile or "default"
+                        self.cache_manager.cache_data(
+                            params, cost_data, self.profile or "default"
                         )
-                        self.cache_manager.cache_data(cache_key, cost_data)
                     except CacheError:
                         # Continue without caching if cache fails
                         pass
@@ -319,6 +315,34 @@ class AWSCostClient:
                         f"Failed to get dimension values for {dimension}: {e}"
                     )
 
+    # AWS Cost Explorer requires MONTHLY periods to align to month boundaries.
+    # For shorter ranges DAILY is both valid and more informative, so we switch
+    # to DAILY when a range spans less than roughly two months.
+    _MONTHLY_THRESHOLD_DAYS = 62
+
+    def _resolve_granularity(
+        self,
+        time_period: TimePeriod,
+        granularity: TimePeriodGranularity,
+    ) -> TimePeriodGranularity:
+        """Pick a granularity that matches the length of the requested range.
+
+        An explicitly non-default granularity (DAILY or HOURLY) is always kept.
+        The default MONTHLY granularity is only downgraded to DAILY when the
+        range is sub-month-ish, which is the broken case: MONTHLY on a short,
+        non-month-aligned range returns a single coarse bucket (or a malformed
+        request) instead of a useful breakdown.
+        """
+        # Anything the caller set away from the MONTHLY default is respected.
+        if granularity != TimePeriodGranularity.MONTHLY:
+            return granularity
+
+        range_days = (time_period.end - time_period.start).days
+        if range_days < self._MONTHLY_THRESHOLD_DAYS:
+            return TimePeriodGranularity.DAILY
+
+        return TimePeriodGranularity.MONTHLY
+
     def _build_cost_request(self, params: QueryParameters) -> Dict[str, Any]:
         """Build the Cost Explorer API request from query parameters."""
         # Default time period if not specified (last 30 days)
@@ -332,12 +356,16 @@ class AWSCostClient:
         else:
             time_period = params.time_period
 
+        granularity = self._resolve_granularity(time_period, params.granularity)
+
         request = {
             "TimePeriod": {
+                # End is the exclusive upper bound; producers already emit an
+                # exclusive end, so pass it through unchanged.
                 "Start": time_period.start.strftime("%Y-%m-%d"),
                 "End": time_period.end.strftime("%Y-%m-%d"),
             },
-            "Granularity": params.granularity.value,
+            "Granularity": granularity.value,
             "Metrics": [metric.value for metric in params.metrics],
         }
 
@@ -603,10 +631,9 @@ class AWSCostClient:
         for query_params in common_queries:
             try:
                 # Check if already cached
-                cache_key = self.cache_manager.generate_cache_key(
+                if not self.cache_manager.get_cached_data(
                     query_params, self.profile or "default"
-                )
-                if not self.cache_manager.get_cached_data(cache_key):
+                ):
                     # Not cached, fetch and cache
                     self.get_cost_and_usage(query_params, use_cache=False)
                     warming_results["queries_warmed"] += 1
@@ -665,238 +692,6 @@ class AWSCostClient:
 
         return self.cache_manager.invalidate_cache(pattern)
 
-    def get_cost_with_trend_analysis(self, params: QueryParameters) -> CostData:
-        """
-        Get cost data with trend analysis if requested.
-
-        Args:
-            params: Query parameters including trend analysis settings
-
-        Returns:
-            CostData with trend analysis included
-        """
-        # Get current period data
-        current_data = self.get_cost_and_usage(params)
-
-        # If trend analysis is requested, get comparison data
-        if params.trend_analysis:
-            from .date_utils import DateRangeCalculator
-            from .trend_analysis import TrendAnalyzer
-
-            calculator = DateRangeCalculator(params.fiscal_year_start_month)
-            analyzer = TrendAnalyzer()
-
-            # Calculate comparison period
-            if params.trend_analysis == TrendAnalysisType.YEAR_OVER_YEAR:
-                comparison_period = calculator.get_previous_period(
-                    params.time_period, "year_ago"
-                )
-            elif params.trend_analysis == TrendAnalysisType.MONTH_OVER_MONTH:
-                comparison_period = calculator.get_previous_period(
-                    params.time_period, "month_ago"
-                )
-            elif params.trend_analysis == TrendAnalysisType.QUARTER_OVER_QUARTER:
-                comparison_period = calculator.get_previous_period(
-                    params.time_period, "quarter_ago"
-                )
-            else:  # PERIOD_OVER_PERIOD
-                comparison_period = calculator.get_previous_period(
-                    params.time_period, "same_length"
-                )
-
-            # Create comparison query parameters
-            comparison_params = QueryParameters(
-                service=params.service,
-                time_period=comparison_period,
-                granularity=params.granularity,
-                metrics=params.metrics,
-                group_by=params.group_by,
-                fiscal_year_start_month=params.fiscal_year_start_month,
-            )
-
-            # Get comparison data
-            comparison_data = self.get_cost_and_usage(comparison_params)
-
-            # Analyze trend
-            trend_data = analyzer.analyze_trend(
-                current_data, comparison_data, params.trend_analysis
-            )
-
-            # Add trend data to result
-            current_data.trend_data = trend_data
-
-        return current_data
-
-    def get_cost_with_forecast(self, params: QueryParameters) -> CostData:
-        """
-        Get cost data with forecasting if requested.
-
-        Args:
-            params: Query parameters including forecast settings
-
-        Returns:
-            CostData with forecast data included
-        """
-        # Get current data
-        cost_data = self.get_cost_and_usage(params)
-
-        # If forecast is requested, generate forecast
-        if params.include_forecast:
-            from .trend_analysis import CostForecaster
-
-            forecaster = CostForecaster()
-
-            # Get historical data for forecasting (last 12 months)
-            historical_periods = self._get_historical_periods(
-                params.time_period.end, 12
-            )
-
-            historical_data = []
-            for period in historical_periods:
-                historical_params = QueryParameters(
-                    service=params.service,
-                    time_period=period,
-                    granularity=TimePeriodGranularity.MONTHLY,
-                    metrics=params.metrics,
-                    group_by=params.group_by,
-                    fiscal_year_start_month=params.fiscal_year_start_month,
-                )
-
-                try:
-                    historical_cost_data = self.get_cost_and_usage(historical_params)
-                    historical_data.append(historical_cost_data)
-                except Exception:
-                    # Skip periods with no data or errors
-                    continue
-
-            # Generate forecast if we have enough historical data
-            if len(historical_data) >= 3:
-                try:
-                    forecast_data = forecaster.forecast_costs(
-                        historical_data, params.forecast_months
-                    )
-                    cost_data.forecast_data = forecast_data
-                except Exception:
-                    # Forecasting failed, continue without forecast
-                    pass
-
-        return cost_data
-
-    def get_advanced_cost_data(self, params: QueryParameters) -> CostData:
-        """
-        Get cost data with all advanced features (trend analysis, forecasting).
-
-        Args:
-            params: Query parameters with advanced features
-
-        Returns:
-            CostData with all requested advanced features
-        """
-        # Start with basic cost data
-        cost_data = self.get_cost_and_usage(params)
-
-        # Add trend analysis if requested
-        if params.trend_analysis:
-            trend_data = self.get_cost_with_trend_analysis(params)
-            cost_data.trend_data = trend_data.trend_data
-
-        # Add forecast if requested
-        if params.include_forecast:
-            forecast_data = self.get_cost_with_forecast(params)
-            cost_data.forecast_data = forecast_data.forecast_data
-
-        return cost_data
-
-    def create_performance_optimized_client(
-        self,
-        enable_parallel: bool = True,
-        enable_compression: bool = True,
-        enable_monitoring: bool = True,
-    ) -> "PerformanceOptimizedClient":
-        """
-        Create a performance-optimized version of this client.
-
-        Args:
-            enable_parallel: Enable parallel query execution
-            enable_compression: Enable cache compression
-            enable_monitoring: Enable performance monitoring
-
-        Returns:
-            PerformanceOptimizedClient instance
-        """
-        return PerformanceOptimizedClient(
-            aws_client=self,
-            cache_manager=self.cache_manager,
-            enable_parallel=enable_parallel,
-            enable_compression=enable_compression,
-            enable_monitoring=enable_monitoring,
-        )
-
-    def get_cost_and_usage_with_performance_optimization(
-        self,
-        params: QueryParameters,
-        use_cache: bool = True,
-        enable_parallel: bool = True,
-        enable_compression: bool = True,
-        max_chunk_days: int = 90,
-    ) -> CostData:
-        """
-        Get cost data with automatic performance optimizations.
-
-        Args:
-            params: Query parameters
-            use_cache: Whether to use caching
-            enable_parallel: Enable parallel execution for large queries
-            enable_compression: Enable cache compression
-            max_chunk_days: Maximum days per parallel chunk
-
-        Returns:
-            CostData with performance optimizations applied
-        """
-        # Create temporary performance-optimized client
-        perf_client = self.create_performance_optimized_client(
-            enable_parallel=enable_parallel,
-            enable_compression=enable_compression,
-            enable_monitoring=True,
-        )
-
-        return perf_client.get_cost_and_usage_optimized(
-            params=params, use_cache=use_cache, max_chunk_days=max_chunk_days
-        )
-
-    def _get_historical_periods(
-        self, end_date: datetime, months: int
-    ) -> List[TimePeriod]:
-        """
-        Get list of historical monthly periods.
-
-        Args:
-            end_date: End date to work backwards from
-            months: Number of months to go back
-
-        Returns:
-            List of TimePeriod objects for historical months
-        """
-        periods = []
-        current_date = end_date
-
-        for _ in range(months):
-            # Go back one month
-            if current_date.month == 1:
-                month_start = current_date.replace(
-                    year=current_date.year - 1, month=12, day=1
-                )
-            else:
-                month_start = current_date.replace(month=current_date.month - 1, day=1)
-
-            # End of month is start of next month
-            month_end = current_date.replace(day=1)
-
-            periods.append(TimePeriod(start=month_start, end=month_end))
-            current_date = month_start
-
-        return list(reversed(periods))  # Return in chronological order
-
     def prefetch_data(self, queries: List[QueryParameters]) -> Dict[str, Any]:
         """
         Prefetch data for multiple queries to warm the cache.
@@ -914,12 +709,10 @@ class AWSCostClient:
 
         for query_params in queries:
             try:
-                cache_key = self.cache_manager.generate_cache_key(
-                    query_params, self.profile or "default"
-                )
-
                 # Check if already cached
-                if self.cache_manager.get_cached_data(cache_key):
+                if self.cache_manager.get_cached_data(
+                    query_params, self.profile or "default"
+                ):
                     results["already_cached"] += 1
                 else:
                     # Fetch and cache

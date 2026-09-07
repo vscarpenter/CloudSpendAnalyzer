@@ -12,6 +12,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from src.aws_cost_cli.cache_manager import CacheManager
+from src.aws_cost_cli.exceptions import CacheError
 from src.aws_cost_cli.models import (
     CostData,
     CostResult,
@@ -346,14 +347,17 @@ class TestCacheManager:
         assert len(retrieved_data.results[0].groups) == 0
 
     def test_cache_directory_creation_failure(self):
-        """Test handling of cache directory creation failure."""
+        """Test handling of cache directory creation failure.
+
+        Cache directory creation failure surfaces as a typed ``CacheError`` (see
+        also ``test_error_handling.test_cache_manager_directory_creation_error``),
+        rather than leaking the raw ``OSError``.
+        """
         with patch("pathlib.Path.mkdir") as mock_mkdir:
             mock_mkdir.side_effect = OSError("Permission denied")
 
-            # Should not raise exception
-            cache_manager = CacheManager(cache_dir="/invalid/path")
-            assert cache_manager is not None
-            assert cache_manager.cache_dir == Path("/invalid/path")
+            with pytest.raises(CacheError, match="Failed to create cache directory"):
+                CacheManager(cache_dir="/invalid/path")
 
     def test_cache_write_failure(
         self, cache_manager, sample_query_params, sample_cost_data
